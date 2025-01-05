@@ -5,6 +5,10 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1.41.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0.95"
+log-panics = "2.1.0"
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic.git"
@@ -25,4 +29,5 @@ features = [
     "wayland",
     # GPU-accelerated rendering
     "wgpu",
+    "autosize"
 ]

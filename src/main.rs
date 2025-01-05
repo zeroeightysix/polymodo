@@ -1,8 +1,23 @@
+mod app;
+
 use cosmic::app::{Core, Task};
 use cosmic::{widget, Application, Element};
+use tracing::metadata::LevelFilter;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
-fn main() {
-    println!("Hello, world!");
+fn main() -> anyhow::Result<()> {
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::WARN.into())
+        .from_env_lossy();
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(env_filter)
+        .try_init()?;
+
+    log_panics::init();
 
     let settings = cosmic::app::Settings::default().size_limits(
         cosmic::iced::Limits::NONE
@@ -10,34 +25,8 @@ fn main() {
             .min_height(180.),
     );
 
-    cosmic::app::run::<AppModel>(settings, ()).expect("error running cosmic app");
+    app::run()?;
+
+    Ok(())
 }
 
-struct AppModel {
-    core: Core,
-}
-
-impl Application for AppModel {
-    type Executor = cosmic::executor::Default;
-    type Flags = ();
-    type Message = ();
-    const APP_ID: &'static str = "";
-
-    fn core(&self) -> &Core {
-        &self.core
-    }
-
-    fn core_mut(&mut self) -> &mut Core {
-        &mut self.core
-    }
-
-    fn init(core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
-        (AppModel {
-            core,
-        }, Task::none())
-    }
-
-    fn view(&self) -> Element<Self::Message> {
-        widget::text::title1("test").into()
-    }
-}
