@@ -1,4 +1,7 @@
+#![feature(let_chains)]
+
 mod app;
+mod xdg;
 
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;

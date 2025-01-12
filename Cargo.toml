@@ -9,6 +9,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1.0.95"
 log-panics = "2.1.0"
+rust-ini = "0.21.1"
+strum = { version = "0.26.3", features = ["derive"] }
+xdg = "2.5.2"
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic.git"
