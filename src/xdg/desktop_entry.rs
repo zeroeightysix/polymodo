@@ -17,6 +17,12 @@ pub struct DesktopEntry {
     comment: Option<String>,
 }
 
+impl DesktopEntry {
+    pub fn name(&self) -> &str {
+        self.name.as_ref()
+    }
+}
+
 #[derive(Copy, Clone, Debug, strum::EnumString)]
 enum ApplicationType {
     Application,

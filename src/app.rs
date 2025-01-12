@@ -1,15 +1,17 @@
+use crate::xdg::DesktopEntry;
 use cosmic::app::{Core, Settings};
 use cosmic::iced::window::Id;
+use cosmic::iced::Limits;
 use cosmic::iced_runtime::core::window::Id as SurfaceId;
 use cosmic::iced_runtime::platform_specific::wayland::layer_surface::SctkLayerSurfaceSettings;
+use cosmic::iced_widget::{button, column};
 use cosmic::iced_winit::commands::layer_surface::get_layer_surface;
 use cosmic::{Application, Element, Task};
 use std::sync::LazyLock;
-use cosmic::iced::Limits;
-use cosmic::iced_widget::button;
 
 static WINDOW_ID: LazyLock<SurfaceId> = LazyLock::new(SurfaceId::unique);
-static AUTOSIZE_ID: LazyLock<cosmic::iced::id::Id> = LazyLock::new(|| cosmic::iced::id::Id::new("autosize"));
+static AUTOSIZE_ID: LazyLock<cosmic::iced::id::Id> =
+    LazyLock::new(|| cosmic::iced::id::Id::new("autosize"));
 
 pub fn run() -> cosmic::iced::Result {
     cosmic::app::run::<AppModel>(
@@ -33,6 +35,7 @@ enum Message {
 
 struct AppModel {
     core: Core,
+    desktop_entries: Vec<DesktopEntry>,
 }
 
 impl Application for AppModel {
@@ -53,15 +56,19 @@ impl Application for AppModel {
         let make_ls = get_layer_surface(SctkLayerSurfaceSettings {
             id: *WINDOW_ID,
             namespace: "launcher".into(),
-            size_limits: Limits::NONE
-                .min_width(120.)
-                .min_height(120.),
+            size_limits: Limits::NONE.min_width(120.).min_height(120.),
             ..Default::default()
         });
 
-        (AppModel {
-            core,
-        }, make_ls)
+        let desktop_entries = crate::xdg::find_desktop_entries();
+
+        (
+            AppModel {
+                core,
+                desktop_entries,
+            },
+            make_ls,
+        )
     }
 
     fn update(&mut self, _message: Self::Message) -> cosmic::app::Task<Self::Message> {
@@ -75,10 +82,13 @@ impl Application for AppModel {
     }
 
     fn view_window(&self, _id: Id) -> Element<Self::Message> {
-        let button = button("Hello world")
-            .on_press(Message::HelloWorld);
+        let eles = self.desktop_entries.iter().map(|entry| {
+            let name = entry.name();
+            button(name).into()
+        });
 
-        cosmic::widget::autosize::autosize(button, AUTOSIZE_ID.clone())
-            .into()
+        let scrollable = cosmic::widget::scrollable(column(eles)).height(200);
+
+        cosmic::widget::autosize::autosize(scrollable, AUTOSIZE_ID.clone()).into()
     }
 }
