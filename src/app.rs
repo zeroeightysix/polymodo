@@ -6,6 +6,7 @@ use cosmic::iced_runtime::core::window::Id as SurfaceId;
 use cosmic::iced_runtime::platform_specific::wayland::layer_surface::SctkLayerSurfaceSettings;
 use cosmic::iced_widget::{button, column};
 use cosmic::iced_winit::commands::layer_surface::get_layer_surface;
+use cosmic::widget::container;
 use cosmic::{Application, Element, Task};
 use std::sync::LazyLock;
 
@@ -89,6 +90,8 @@ impl Application for AppModel {
 
         let scrollable = cosmic::widget::scrollable(column(eles)).height(200);
 
-        cosmic::widget::autosize::autosize(scrollable, AUTOSIZE_ID.clone()).into()
+        let container = container(scrollable).class(cosmic::style::Container::WindowBackground);
+
+        cosmic::widget::autosize::autosize(container, AUTOSIZE_ID.clone()).into()
     }
 }

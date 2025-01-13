@@ -42,12 +42,17 @@ pub fn load(path: impl AsRef<Path>) -> anyhow::Result<DesktopEntry> {
     };
 
     let ini = Ini::load_from_str(&content)?;
-    let main_section = ini.section(Some("Desktop Entry"))
+    let main_section = ini
+        .section(Some("Desktop Entry"))
         .context("desktop entry does not have a Desktop Entry section")?;
 
-    let entry_type = main_section.get("Type").context("desktop entry does not have a Type section")?
+    let entry_type = main_section
+        .get("Type")
+        .context("desktop entry does not have a Type section")?
         .try_into()?;
-    let name = main_section.get("Name").context("desktop entry does not have a Name section")?;
+    let name = main_section
+        .get("Name")
+        .context("desktop entry does not have a Name section")?;
     let generic_name = main_section.get("GenericName");
     let comment = main_section.get("Comment");
 
@@ -63,7 +68,9 @@ pub fn load(path: impl AsRef<Path>) -> anyhow::Result<DesktopEntry> {
 
 pub fn find_desktop_entries() -> Vec<DesktopEntry> {
     let dirs = xdg::BaseDirectories::new().expect("cannot get base directories");
-    let desktop_files = dirs.get_data_dirs().iter()
+    let desktop_files = dirs
+        .get_data_dirs()
+        .iter()
         .map(|dir| dir.join("applications"))
         .map(|dir| dir.read_dir())
         .filter_map(Result::ok)
@@ -71,7 +78,8 @@ pub fn find_desktop_entries() -> Vec<DesktopEntry> {
             d.filter_map(Result::ok)
                 .map(|entry| load(entry.path()))
                 .filter_map(Result::ok)
-        }).collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
 
-    desktop_files   
+    desktop_files
 }
