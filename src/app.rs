@@ -31,11 +31,12 @@ pub fn run() -> cosmic::iced::Result {
 
 #[derive(Debug, Clone)]
 enum Message {
-    HelloWorld,
+    InputChanged(String),
 }
 
 struct AppModel {
     core: Core,
+    search_input: String,
     desktop_entries: Vec<DesktopEntry>,
 }
 
@@ -58,6 +59,7 @@ impl Application for AppModel {
             id: *WINDOW_ID,
             namespace: "launcher".into(),
             size_limits: Limits::NONE.min_width(120.).min_height(120.),
+            keyboard_interactivity: cosmic::cctk::sctk::shell::wlr_layer::KeyboardInteractivity::OnDemand,
             ..Default::default()
         });
 
@@ -66,15 +68,20 @@ impl Application for AppModel {
         (
             AppModel {
                 core,
+                search_input: String::new(),
                 desktop_entries,
             },
             make_ls,
         )
     }
 
-    fn update(&mut self, _message: Self::Message) -> cosmic::app::Task<Self::Message> {
-        println!("hello world!");
-
+    fn update(&mut self, message: Self::Message) -> cosmic::app::Task<Self::Message> {
+        match message {
+            Message::InputChanged(s) => {
+                self.search_input = s;
+            }
+        }
+        
         Task::none()
     }
 
@@ -83,14 +90,23 @@ impl Application for AppModel {
     }
 
     fn view_window(&self, _id: Id) -> Element<Self::Message> {
+        let input_field = cosmic::widget::search_input("search", &self.search_input)
+            .on_input(Message::InputChanged)
+            .on_paste(Message::InputChanged)
+            .width(200);
+
         let eles = self.desktop_entries.iter().map(|entry| {
             let name = entry.name();
             button(name).into()
         });
-
         let scrollable = cosmic::widget::scrollable(column(eles)).height(200);
 
-        let container = container(scrollable).class(cosmic::style::Container::WindowBackground);
+        let col = column![
+            input_field,
+            scrollable,
+        ];
+
+        let container = container(col).class(cosmic::style::Container::WindowBackground); // TODO: rounded background?
 
         cosmic::widget::autosize::autosize(container, AUTOSIZE_ID.clone()).into()
     }
