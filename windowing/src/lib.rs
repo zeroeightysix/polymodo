@@ -1,3 +1,5 @@
+use derive_more::with_trait::From;
+use derive_more::{Display, Error};
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::client::{globals, QueueHandle};
@@ -18,10 +20,172 @@ use smithay_client_toolkit::{
 };
 use std::fmt::Debug;
 use std::ptr::NonNull;
+use smithay_client_toolkit::reexports::client::globals::GlobalError;
 use wgpu::rwh::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
 };
+
+#[derive(Debug, Display, Error, From)]
+pub enum LayerWindowingError {
+    NotWayland,
+    GlobalError(GlobalError),
+    NoLayerShell,
+    NoAdapter,
+    RequestDeviceError(wgpu::RequestDeviceError),
+    SurfaceError(wgpu::SurfaceError),
+}
+
+pub struct LayerWindowing {
+    registry_state: RegistryState,
+    seat_state: SeatState,
+    output_state: OutputState,
+
+    exit: bool,
+    first_configure: bool,
+    width: u32,
+    height: u32,
+    layer: LayerSurface,
+    keyboard: Option<protocol::wl_keyboard::WlKeyboard>,
+    keyboard_focus: bool,
+    pointer: Option<protocol::wl_pointer::WlPointer>,
+
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    surface: wgpu::Surface<'static>,
+    surface_format: wgpu::TextureFormat,
+}
+
+impl LayerWindowing {
+    fn configure_surface(&self) {
+        self.surface.configure(
+            &self.device,
+            &wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format: self.surface_format,
+                view_formats: vec![self.surface_format.add_srgb_suffix()],
+                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                width: self.width,
+                height: self.height,
+                desired_maximum_frame_latency: 2,
+                present_mode: wgpu::PresentMode::Mailbox,
+            },
+        );
+    }
+
+    fn update_size(&mut self, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
+        self.configure_surface();
+    }
+
+    fn render(&mut self) -> Result<(), LayerWindowingError> {
+        let surf_texture = self.surface.get_current_texture()?;
+        let tex_view = surf_texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor {
+                format: Some(self.surface_format.add_srgb_suffix()),
+                ..Default::default()
+            });
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &tex_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::GREEN), // TODO
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        // TODO: egui render
+
+        drop(pass);
+        self.queue.submit(std::iter::once(encoder.finish()));
+        surf_texture.present();
+
+        Ok(())
+    }
+
+    pub async fn create(
+        LayerShellOptions {
+            layer,
+            namespace,
+            anchor,
+            width,
+            height,
+        }: LayerShellOptions<'_>,
+    ) -> Result<(EventQueue<LayerWindowing>, LayerWindowing), LayerWindowingError> {
+        let connection =
+            Connection::connect_to_env().map_err(|_| LayerWindowingError::NotWayland)?;
+        let (globals, event_queue) = globals::registry_queue_init(&connection)?;
+        let qh: QueueHandle<LayerWindowing> = event_queue.handle();
+
+        let compositor = CompositorState::bind(&globals, &qh).unwrap();
+        let layer_shell =
+            LayerShell::bind(&globals, &qh).map_err(|_| LayerWindowingError::NoLayerShell)?;
+
+        let surface = compositor.create_surface(&qh);
+        let surf_id = surface.id();
+        let layer = layer_shell.create_layer_surface(&qh, surface, layer, namespace, None);
+
+        layer.set_anchor(anchor);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+        layer.set_size(width, height);
+        layer.commit();
+
+        let instance = wgpu::Instance::default();
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .ok_or(LayerWindowingError::NoAdapter)?;
+
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor::default(), None)
+            .await?;
+
+        let surface_ptr = NonNull::new(surf_id.as_ptr() as *mut std::ffi::c_void).unwrap();
+        let display_ptr =
+            NonNull::new(connection.backend().display_ptr() as *mut std::ffi::c_void).unwrap();
+
+        let wh = LayerWindowHandle(
+            RawWindowHandle::Wayland(WaylandWindowHandle::new(surface_ptr)),
+            RawDisplayHandle::Wayland(WaylandDisplayHandle::new(display_ptr)),
+        );
+        let st = wgpu::SurfaceTarget::Window(Box::new(wh));
+
+        let wgpu_surface = instance.create_surface(st).unwrap();
+        let cap = wgpu_surface.get_capabilities(&adapter);
+        let surface_format = cap.formats[0];
+
+        let state = LayerWindowing {
+            registry_state: RegistryState::new(&globals),
+            seat_state: SeatState::new(&globals, &qh),
+            output_state: OutputState::new(&globals, &qh),
+            exit: false,
+            first_configure: true,
+            width,
+            height,
+            layer,
+            keyboard: None,
+            keyboard_focus: false,
+            pointer: None,
+            device,
+            queue,
+            surface: wgpu_surface,
+            surface_format,
+        };
+
+        state.configure_surface();
+
+        Ok((event_queue, state))
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
 pub struct LayerShellOptions<'a> {
@@ -44,27 +208,7 @@ impl Default for LayerShellOptions<'_> {
     }
 }
 
-pub struct LayerShellState {
-    registry_state: RegistryState,
-    seat_state: SeatState,
-    output_state: OutputState,
-
-    exit: bool,
-    first_configure: bool,
-    width: u32,
-    height: u32,
-    layer: LayerSurface,
-    keyboard: Option<protocol::wl_keyboard::WlKeyboard>,
-    keyboard_focus: bool,
-    pointer: Option<protocol::wl_pointer::WlPointer>,
-
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    surface: wgpu::Surface<'static>,
-    surface_format: wgpu::TextureFormat,
-}
-
-impl CompositorHandler for LayerShellState {
+impl CompositorHandler for LayerWindowing {
     fn scale_factor_changed(
         &mut self,
         _conn: &Connection,
@@ -92,7 +236,7 @@ impl CompositorHandler for LayerShellState {
         _surface: &protocol::wl_surface::WlSurface,
         _time: u32,
     ) {
-        self.render();
+        let _ = self.render();
     }
 
     fn surface_enter(
@@ -116,7 +260,7 @@ impl CompositorHandler for LayerShellState {
     }
 }
 
-impl OutputHandler for LayerShellState {
+impl OutputHandler for LayerWindowing {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.output_state
     }
@@ -146,7 +290,7 @@ impl OutputHandler for LayerShellState {
     }
 }
 
-impl LayerShellHandler for LayerShellState {
+impl LayerShellHandler for LayerWindowing {
     fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {
         self.exit = true;
     }
@@ -170,12 +314,12 @@ impl LayerShellHandler for LayerShellState {
         // Initiate the first draw.
         if self.first_configure {
             self.first_configure = false;
-            self.render();
+            let _ = self.render();
         }
     }
 }
 
-impl SeatHandler for LayerShellState {
+impl SeatHandler for LayerWindowing {
     fn seat_state(&mut self) -> &mut SeatState {
         &mut self.seat_state
     }
@@ -230,7 +374,7 @@ impl SeatHandler for LayerShellState {
     }
 }
 
-impl KeyboardHandler for LayerShellState {
+impl KeyboardHandler for LayerWindowing {
     fn enter(
         &mut self,
         _: &Connection,
@@ -299,7 +443,7 @@ impl KeyboardHandler for LayerShellState {
     }
 }
 
-impl PointerHandler for LayerShellState {
+impl PointerHandler for LayerWindowing {
     fn pointer_frame(
         &mut self,
         _conn: &Connection,
@@ -339,7 +483,7 @@ impl PointerHandler for LayerShellState {
     }
 }
 
-impl ProvidesRegistryState for LayerShellState {
+impl ProvidesRegistryState for LayerWindowing {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.registry_state
     }
@@ -347,16 +491,16 @@ impl ProvidesRegistryState for LayerShellState {
     registry_handlers![OutputState, SeatState];
 }
 
-delegate_compositor!(LayerShellState);
-delegate_output!(LayerShellState);
+delegate_compositor!(LayerWindowing);
+delegate_output!(LayerWindowing);
 
-delegate_seat!(LayerShellState);
-delegate_keyboard!(LayerShellState);
-delegate_pointer!(LayerShellState);
+delegate_seat!(LayerWindowing);
+delegate_keyboard!(LayerWindowing);
+delegate_pointer!(LayerWindowing);
 
-delegate_layer!(LayerShellState);
+delegate_layer!(LayerWindowing);
 
-delegate_registry!(LayerShellState);
+delegate_registry!(LayerWindowing);
 
 struct LayerWindowHandle(RawWindowHandle, RawDisplayHandle);
 
@@ -375,140 +519,9 @@ impl HasDisplayHandle for LayerWindowHandle {
 unsafe impl Send for LayerWindowHandle {}
 unsafe impl Sync for LayerWindowHandle {}
 
-pub async fn init(
-    LayerShellOptions {
-        layer,
-        namespace,
-        anchor,
-        width,
-        height,
-    }: LayerShellOptions<'_>,
-) -> (EventQueue<LayerShellState>, LayerShellState) {
-    let connection = Connection::connect_to_env().unwrap();
-    let (globals, event_queue) = globals::registry_queue_init(&connection).unwrap();
-    let qh: QueueHandle<LayerShellState> = event_queue.handle();
-
-    let compositor = CompositorState::bind(&globals, &qh).unwrap();
-    let layer_shell = LayerShell::bind(&globals, &qh).expect("layer_shell is not available");
-
-    let surface = compositor.create_surface(&qh);
-    let surf_id = surface.id();
-    let layer = layer_shell.create_layer_surface(&qh, surface, layer, namespace, None);
-
-    layer.set_anchor(anchor);
-    layer.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
-    layer.set_size(width, height);
-    layer.commit();
-
-    let instance = wgpu::Instance::default();
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions::default())
-        .await
-        .unwrap();
-
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor::default(), None)
-        .await
-        .unwrap();
-
-    let surface_ptr = NonNull::new(surf_id.as_ptr() as *mut std::ffi::c_void).unwrap();
-    let display_ptr =
-        NonNull::new(connection.backend().display_ptr() as *mut std::ffi::c_void).unwrap();
-
-    let wh = LayerWindowHandle(
-        RawWindowHandle::Wayland(WaylandWindowHandle::new(surface_ptr)),
-        RawDisplayHandle::Wayland(WaylandDisplayHandle::new(display_ptr)),
-    );
-    let st = wgpu::SurfaceTarget::Window(Box::new(wh));
-
-    let wgpu_surface = instance.create_surface(st).unwrap();
-    let cap = wgpu_surface.get_capabilities(&adapter);
-    let surface_format = cap.formats[0];
-
-    let state = LayerShellState {
-        registry_state: RegistryState::new(&globals),
-        seat_state: SeatState::new(&globals, &qh),
-        output_state: OutputState::new(&globals, &qh),
-        exit: false,
-        first_configure: true,
-        width,
-        height,
-        layer,
-        keyboard: None,
-        keyboard_focus: false,
-        pointer: None,
-        device,
-        queue,
-        surface: wgpu_surface,
-        surface_format,
-    };
-
-    state.configure_surface();
-
-    (event_queue, state)
-}
-
-impl LayerShellState {
-    fn configure_surface(&self) {
-        self.surface.configure(
-            &self.device,
-            &wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: self.surface_format,
-                view_formats: vec![self.surface_format.add_srgb_suffix()],
-                alpha_mode: wgpu::CompositeAlphaMode::Auto,
-                width: self.width,
-                height: self.height,
-                desired_maximum_frame_latency: 2,
-                present_mode: wgpu::PresentMode::Mailbox,
-            },
-        );
-    }
-
-    fn update_size(&mut self, width: u32, height: u32) {
-        self.width = width;
-        self.height = height;
-        self.configure_surface();
-    }
-
-    fn render(&mut self) {
-        let surf_texture = self
-            .surface
-            .get_current_texture()
-            .expect("failed to acquire surface texture");
-        let tex_view = surf_texture
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor {
-                format: Some(self.surface_format.add_srgb_suffix()),
-                ..Default::default()
-            });
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: None,
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &tex_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::GREEN), // TODO
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-
-        // TODO: egui render
-
-        drop(pass);
-        self.queue.submit(std::iter::once(encoder.finish()));
-        surf_texture.present();
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::{init, LayerShellOptions};
+    use crate::*;
     use smithay_client_toolkit::shell::wlr_layer::Anchor;
 
     #[test]
@@ -516,11 +529,11 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
 
         runtime.block_on(async {
-            let (mut eq, mut lst) = init(LayerShellOptions {
+            let (mut eq, mut lst) = LayerWindowing::create(LayerShellOptions {
                 anchor: Anchor::empty(),
                 ..Default::default()
             })
-            .await;
+            .await.unwrap();
 
             loop {
                 eq.blocking_dispatch(&mut lst).unwrap();
