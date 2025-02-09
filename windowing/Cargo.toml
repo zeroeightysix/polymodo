@@ -1,0 +1,10 @@
+[package]
+name = "windowing"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+smithay-client-toolkit = "0.19.2"
+wayland-backend = { version = "0.3", features = ["client_system", "dlopen"] }
+wgpu = "24.0.1"
+tokio = { version = "1", default-features = false, features = ["full"] }
