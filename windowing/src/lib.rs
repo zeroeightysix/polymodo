@@ -1,7 +1,9 @@
 use derive_more::with_trait::From;
 use derive_more::{Display, Error};
+use egui_wgpu::{RenderState, ScreenDescriptor, WgpuConfiguration, WgpuError, WgpuSetup};
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
+use smithay_client_toolkit::reexports::client::globals::GlobalError;
 use smithay_client_toolkit::reexports::client::{globals, QueueHandle};
 use smithay_client_toolkit::reexports::client::{protocol, Proxy};
 use smithay_client_toolkit::reexports::client::{Connection, EventQueue};
@@ -20,10 +22,10 @@ use smithay_client_toolkit::{
 };
 use std::fmt::Debug;
 use std::ptr::NonNull;
-use smithay_client_toolkit::reexports::client::globals::GlobalError;
+use egui::{Color32, Context};
 use wgpu::rwh::{
-    DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
-    RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
+    RawDisplayHandle,
+    RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
 };
 
 #[derive(Debug, Display, Error, From)]
@@ -34,6 +36,8 @@ pub enum LayerWindowingError {
     NoAdapter,
     RequestDeviceError(wgpu::RequestDeviceError),
     SurfaceError(wgpu::SurfaceError),
+    CreateSurfaceError(wgpu::CreateSurfaceError),
+    WgpuError(WgpuError),
 }
 
 pub struct LayerWindowing {
@@ -50,20 +54,20 @@ pub struct LayerWindowing {
     keyboard_focus: bool,
     pointer: Option<protocol::wl_pointer::WlPointer>,
 
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    ctx: Context,
+    render_state: RenderState,
     surface: wgpu::Surface<'static>,
-    surface_format: wgpu::TextureFormat,
 }
 
 impl LayerWindowing {
     fn configure_surface(&self) {
+        let format = self.render_state.target_format;
         self.surface.configure(
-            &self.device,
+            &self.render_state.device,
             &wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: self.surface_format,
-                view_formats: vec![self.surface_format.add_srgb_suffix()],
+                format,
+                view_formats: vec![format.add_srgb_suffix()],
                 alpha_mode: wgpu::CompositeAlphaMode::Auto,
                 width: self.width,
                 height: self.height,
@@ -80,40 +84,70 @@ impl LayerWindowing {
     }
 
     fn render(&mut self) -> Result<(), LayerWindowingError> {
-        let surf_texture = self.surface.get_current_texture()?;
-        let tex_view = surf_texture
+        let output_frame = self.surface.get_current_texture()?;
+        let output_view = output_frame
             .texture
-            .create_view(&wgpu::TextureViewDescriptor {
-                format: Some(self.surface_format.add_srgb_suffix()),
-                ..Default::default()
-            });
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self.render_state.device.create_command_encoder(&Default::default());
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &tex_view,
+                view: &output_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::GREEN), // TODO
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), // TODO: this doesn't work; the texture is black instead
                     store: wgpu::StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+        }).forget_lifetime();
+
+        let raw_input = egui::RawInput::default();
+        let output = self.ctx.run(raw_input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.label("hello world");
+            });
         });
-
-        // TODO: egui render
-
+        // TODO: output.platform_output
+        let prims = self.ctx.tessellate(output.shapes, output.pixels_per_point);
+        {
+            let mut renderer = self.render_state.renderer.write();
+            let descriptor = ScreenDescriptor {
+                size_in_pixels: [self.width, self.height],
+                pixels_per_point: output.pixels_per_point,
+            };
+            for (id, delta) in output.textures_delta.set {
+                renderer.update_texture(&self.render_state.device, &self.render_state.queue, id, &delta);
+            }
+            renderer.update_buffers(&self.render_state.device, &self.render_state.queue, &mut encoder, &prims, &descriptor);
+            renderer.render(
+                &mut pass,
+                &prims,
+                &descriptor,
+            );
+        }
         drop(pass);
-        self.queue.submit(std::iter::once(encoder.finish()));
-        surf_texture.present();
+
+        self.render_state.queue.submit(std::iter::once(encoder.finish()));
+
+        {
+            let mut renderer = self.render_state.renderer.write();
+            for id in &output.textures_delta.free {
+                renderer.free_texture(id);
+            }
+        }
+
+        output_frame.present();
 
         Ok(())
     }
 
     pub async fn create(
         LayerShellOptions {
+            wgpu_setup,
+            wgpu_options,
             layer,
             namespace,
             anchor,
@@ -139,29 +173,33 @@ impl LayerWindowing {
         layer.set_size(width, height);
         layer.commit();
 
-        let instance = wgpu::Instance::default();
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions::default())
-            .await
-            .ok_or(LayerWindowingError::NoAdapter)?;
+        let instance = wgpu_setup.new_instance().await;
 
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
-            .await?;
+        let surface = unsafe {
+            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
+                    NonNull::new(connection.backend().display_ptr() as *mut std::ffi::c_void)
+                        .unwrap(),
+                )),
+                raw_window_handle: RawWindowHandle::Wayland(WaylandWindowHandle::new(
+                    NonNull::new(surf_id.as_ptr() as *mut std::ffi::c_void).unwrap(),
+                )),
+            })?
+        };
+        let render_state = RenderState::create(
+            &wgpu_options,
+            &instance,
+            Some(&surface),
+            None,
+            1,
+            true,
+        ).await?;
 
-        let surface_ptr = NonNull::new(surf_id.as_ptr() as *mut std::ffi::c_void).unwrap();
-        let display_ptr =
-            NonNull::new(connection.backend().display_ptr() as *mut std::ffi::c_void).unwrap();
-
-        let wh = LayerWindowHandle(
-            RawWindowHandle::Wayland(WaylandWindowHandle::new(surface_ptr)),
-            RawDisplayHandle::Wayland(WaylandDisplayHandle::new(display_ptr)),
-        );
-        let st = wgpu::SurfaceTarget::Window(Box::new(wh));
-
-        let wgpu_surface = instance.create_surface(st).unwrap();
-        let cap = wgpu_surface.get_capabilities(&adapter);
-        let surface_format = cap.formats[0];
+        let ctx: Context = Default::default();
+        ctx.set_theme(egui::Theme::Light);
+        ctx.all_styles_mut(|sty| {
+            sty.visuals.panel_fill = Color32::TRANSPARENT;
+        });
 
         let state = LayerWindowing {
             registry_state: RegistryState::new(&globals),
@@ -175,10 +213,10 @@ impl LayerWindowing {
             keyboard: None,
             keyboard_focus: false,
             pointer: None,
-            device,
-            queue,
-            surface: wgpu_surface,
-            surface_format,
+
+            ctx,
+            render_state,
+            surface,
         };
 
         state.configure_surface();
@@ -187,8 +225,10 @@ impl LayerWindowing {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct LayerShellOptions<'a> {
+    wgpu_setup: WgpuSetup,
+    wgpu_options: WgpuConfiguration,
     layer: Layer,
     namespace: Option<&'a str>,
     anchor: Anchor,
@@ -199,6 +239,8 @@ pub struct LayerShellOptions<'a> {
 impl Default for LayerShellOptions<'_> {
     fn default() -> Self {
         Self {
+            wgpu_setup: Default::default(),
+            wgpu_options: Default::default(),
             layer: Layer::Top,
             namespace: None,
             anchor: Anchor::all(),
@@ -502,23 +544,6 @@ delegate_layer!(LayerWindowing);
 
 delegate_registry!(LayerWindowing);
 
-struct LayerWindowHandle(RawWindowHandle, RawDisplayHandle);
-
-impl HasWindowHandle for LayerWindowHandle {
-    fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
-        Ok(unsafe { WindowHandle::borrow_raw(self.0) })
-    }
-}
-
-impl HasDisplayHandle for LayerWindowHandle {
-    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
-        Ok(unsafe { DisplayHandle::borrow_raw(self.1) })
-    }
-}
-
-unsafe impl Send for LayerWindowHandle {}
-unsafe impl Sync for LayerWindowHandle {}
-
 #[cfg(test)]
 mod tests {
     use crate::*;
@@ -533,7 +558,8 @@ mod tests {
                 anchor: Anchor::empty(),
                 ..Default::default()
             })
-            .await.unwrap();
+            .await
+            .unwrap();
 
             loop {
                 eq.blocking_dispatch(&mut lst).unwrap();
