@@ -12,25 +12,8 @@ log-panics = "2.1.0"
 rust-ini = "0.21.1"
 strum = { version = "0.26.3", features = ["derive"] }
 xdg = "2.5.2"
+nucleo = "0.5.0"
+windowing = { path = "windowing" }
 
-[dependencies.libcosmic]
-git = "https://github.com/pop-os/libcosmic.git"
-features = [
-    # Accessibility support
-    "a11y",
-    # Uses cosmic-settings-daemon to watch for config file changes
-    "dbus-config",
-    # Support creating additional application windows.
-    "multi-window",
-    # On app startup, focuses an existing instance if the app is already open
-    "single-instance",
-    # Uses tokio as the executor for the runtime
-    "tokio",
-    # Windowing support for X11, Windows, Mac, & Redox
-    "winit",
-    # Add Wayland support to winit
-    "wayland",
-    # GPU-accelerated rendering
-    "wgpu",
-    "autosize"
-]
+[workspace]
+members = ["windowing"]
