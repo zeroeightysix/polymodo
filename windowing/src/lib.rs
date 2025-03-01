@@ -69,7 +69,7 @@ impl<A: app::App> LayerWindowing<A> {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 format,
                 view_formats: vec![format.add_srgb_suffix()],
-                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied,
                 width: self.width,
                 height: self.height,
                 desired_maximum_frame_latency: 2,
