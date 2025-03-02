@@ -1920,6 +1920,7 @@ dependencies = [
  "derive_more",
  "egui",
  "egui-wgpu",
+ "log",
  "smithay-client-toolkit",
  "tokio",
  "wayland-backend",

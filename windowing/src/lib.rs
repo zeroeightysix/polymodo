@@ -29,6 +29,7 @@ use wgpu::rwh::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, Wayland
 
 pub use egui;
 pub use smithay_client_toolkit as sctk;
+use log::log;
 
 #[derive(Debug, Display, Error, From)]
 pub enum LayerWindowingError {
@@ -429,6 +430,7 @@ impl<A: 'static> SeatHandler for LayerWindowing<A> {
                 .seat_state
                 .get_keyboard(qh, &seat, None)
                 .expect("Failed to create keyboard");
+            log::trace!("Keyboard capability: {:?}", keyboard);
             self.keyboard = Some(keyboard);
         }
 
@@ -437,6 +439,7 @@ impl<A: 'static> SeatHandler for LayerWindowing<A> {
                 .seat_state
                 .get_pointer(qh, &seat)
                 .expect("Failed to create pointer");
+            log::trace!("Pointer capability: {:?}", pointer);
             self.pointer = Some(pointer);
         }
     }
@@ -449,12 +452,12 @@ impl<A: 'static> SeatHandler for LayerWindowing<A> {
         capability: Capability,
     ) {
         if capability == Capability::Keyboard && self.keyboard.is_some() {
-            println!("Unset keyboard capability");
+            log::trace!("Unset keyboard capability");
             self.keyboard.take().unwrap().release();
         }
 
         if capability == Capability::Pointer && self.pointer.is_some() {
-            println!("Unset pointer capability");
+            log::trace!("Unset pointer capability");
             self.pointer.take().unwrap().release();
         }
     }
@@ -563,6 +566,8 @@ impl<A> PointerHandler for LayerWindowing<A> {
         _pointer: &protocol::wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
+        log::trace!("pointer_frame {events:?}");
+
         use PointerEventKind::*;
         for event in events {
             // Ignore events for other surfaces
