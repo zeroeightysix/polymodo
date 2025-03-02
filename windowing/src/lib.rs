@@ -1,4 +1,6 @@
 pub mod app;
+pub mod client;
+mod convert;
 
 use derive_more::with_trait::From;
 use derive_more::{Display, Error};
@@ -24,13 +26,22 @@ use smithay_client_toolkit::{
     delegate_registry, delegate_seat, registry_handlers,
 };
 use std::fmt::Debug;
-use std::io::ErrorKind;
 use std::ptr::NonNull;
 use wgpu::rwh::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle};
 
 pub use egui;
 pub use smithay_client_toolkit as sctk;
-use wayland_backend::client::WaylandError;
+
+#[derive(Debug, Clone)]
+pub struct LayerShellOptions<'a> {
+    pub wgpu_setup: WgpuSetup,
+    pub wgpu_options: WgpuConfiguration,
+    pub layer: Layer,
+    pub namespace: Option<&'a str>,
+    pub anchor: Anchor,
+    pub width: u32,
+    pub height: u32,
+}
 
 #[derive(Debug, Display, Error, From)]
 pub enum LayerWindowingError {
@@ -68,56 +79,6 @@ pub struct LayerWindowing<A> {
     surface: wgpu::Surface<'static>,
     pub ctx: Context,
     pub app: A,
-}
-
-pub struct Client<A> {
-    event_queue: EventQueue<LayerWindowing<A>>,
-    layer_windowing: LayerWindowing<A>,
-}
-
-impl<A: app::App + 'static> Client<A> {
-    pub async fn create(
-        options: LayerShellOptions<'_>,
-        app: A
-    ) -> Result<Self, LayerWindowingError> {
-        let (event_queue, layer_windowing) = LayerWindowing::create(options, app).await?;
-
-        Ok(Self {
-            event_queue,
-            layer_windowing,
-        })
-    }
-
-    pub async fn update(&mut self) -> Result<(), LayerWindowingError> {
-        let eq = &mut self.event_queue;
-        let windowing = &mut self.layer_windowing;
-        let dispatched = eq.dispatch_pending(windowing)?;
-        if dispatched > 0 {
-            return Ok(());
-        }
-
-        eq.flush()?;
-
-        if !windowing.events.is_empty() || windowing.ctx.has_requested_repaint() {
-            windowing.render()?;
-        }
-
-        if let Some(events) = eq.prepare_read() {
-            let fd = events.connection_fd().try_clone_to_owned()?;
-            let async_fd = tokio::io::unix::AsyncFd::new(fd)?;
-            let mut ready_guard = async_fd.readable().await?;
-            match events.read() {
-                Ok(_) => {
-                    ready_guard.clear_ready();
-                }
-                Err(WaylandError::Io(e)) if e.kind() == ErrorKind::WouldBlock => {}
-                Err(e) => Err(e)?,
-            }
-            drop(ready_guard);
-        }
-
-        Ok(())
-    }
 }
 
 impl<A> LayerWindowing<A> {
@@ -325,17 +286,6 @@ impl<A: app::App> LayerWindowing<A> {
 
         Ok(())
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct LayerShellOptions<'a> {
-    pub wgpu_setup: WgpuSetup,
-    pub wgpu_options: WgpuConfiguration,
-    pub layer: Layer,
-    pub namespace: Option<&'a str>,
-    pub anchor: Anchor,
-    pub width: u32,
-    pub height: u32,
 }
 
 impl Default for LayerShellOptions<'_> {
@@ -561,7 +511,7 @@ impl<A> KeyboardHandler for LayerWindowing<A> {
     ) {
         log::trace!("key press {:?}", event);
 
-        let key = keysym_to_key(event.keysym);
+        let key = convert::keysym_to_key(event.keysym);
         if let Some(t) = event.utf8 {
             if !(t.is_empty() || t.chars().all(|c| c.is_ascii_control())) {
                 self.events.push(egui::Event::Text(t));
@@ -586,7 +536,7 @@ impl<A> KeyboardHandler for LayerWindowing<A> {
         _: u32,
         event: KeyEvent,
     ) {
-        let key = keysym_to_key(event.keysym);
+        let key = convert::keysym_to_key(event.keysym);
         if let Some(key) = key {
             self.events.push(egui::Event::Key {
                 key,
@@ -647,7 +597,7 @@ impl<A> PointerHandler for LayerWindowing<A> {
                 Press { button, .. } => {
                     self.events.push(egui::Event::PointerButton {
                         pos,
-                        button: pointer_button_to_egui(button),
+                        button: convert::pointer_button_to_egui(button),
                         pressed: true,
                         modifiers: self.modifiers,
                     });
@@ -655,7 +605,7 @@ impl<A> PointerHandler for LayerWindowing<A> {
                 Release { button, .. } => {
                     self.events.push(egui::Event::PointerButton {
                         pos,
-                        button: pointer_button_to_egui(button),
+                        button: convert::pointer_button_to_egui(button),
                         pressed: false,
                         modifiers: self.modifiers,
                     });
@@ -692,134 +642,3 @@ delegate_pointer!(@<A> LayerWindowing<A>);
 delegate_layer!(@<A: (app::App) + 'static> LayerWindowing<A>);
 
 delegate_registry!(@<A: (app::App) + 'static> LayerWindowing<A>);
-
-fn keysym_to_key(sym: Keysym) -> Option<Key> {
-    match sym {
-        Keysym::Down => Some(Key::ArrowDown),
-        Keysym::Left => Some(Key::ArrowLeft),
-        Keysym::Right => Some(Key::ArrowRight),
-        Keysym::Up => Some(Key::ArrowUp),
-        Keysym::Escape => Some(Key::Escape),
-        Keysym::Tab => Some(Key::Tab),
-        Keysym::BackSpace => Some(Key::Backspace),
-        Keysym::Return => Some(Key::Enter),
-        Keysym::space => Some(Key::Space),
-        Keysym::Insert => Some(Key::Insert),
-        Keysym::Delete => Some(Key::Delete),
-        Keysym::Home => Some(Key::Home),
-        Keysym::End => Some(Key::End),
-        Keysym::Prior => Some(Key::PageUp),
-        Keysym::Next => Some(Key::PageDown),
-        // Keysym::Copy => Key::Copy,
-        // Keysym::Cut => Key::Cut,
-        // Keysym::Paste => Key::Paste,
-        Keysym::colon => Some(Key::Colon),
-        Keysym::comma => Some(Key::Comma),
-        Keysym::slash => Some(Key::Slash),
-        Keysym::bar => Some(Key::Pipe),
-        Keysym::question => Some(Key::Questionmark),
-        Keysym::exclam => Some(Key::Exclamationmark),
-        Keysym::bracketleft => Some(Key::OpenBracket),
-        Keysym::bracketright => Some(Key::CloseBracket),
-        Keysym::braceleft => Some(Key::OpenCurlyBracket),
-        Keysym::braceright => Some(Key::CloseCurlyBracket),
-        Keysym::grave => Some(Key::Backtick),
-        Keysym::period => Some(Key::Period),
-        Keysym::plus => Some(Key::Plus),
-        Keysym::equal => Some(Key::Equals),
-        Keysym::semicolon => Some(Key::Semicolon),
-        Keysym::apostrophe => Some(Key::Quote),
-        Keysym::_0 => Some(Key::Num0),
-        Keysym::_1 => Some(Key::Num1),
-        Keysym::_2 => Some(Key::Num2),
-        Keysym::_3 => Some(Key::Num3),
-        Keysym::_4 => Some(Key::Num4),
-        Keysym::_5 => Some(Key::Num5),
-        Keysym::_6 => Some(Key::Num6),
-        Keysym::_7 => Some(Key::Num7),
-        Keysym::_8 => Some(Key::Num8),
-        Keysym::_9 => Some(Key::Num9),
-        Keysym::a | Keysym::A => Some(Key::A),
-        Keysym::b | Keysym::B => Some(Key::B),
-        Keysym::c | Keysym::C => Some(Key::C),
-        Keysym::d | Keysym::D => Some(Key::D),
-        Keysym::e | Keysym::E => Some(Key::E),
-        Keysym::f | Keysym::F => Some(Key::F),
-        Keysym::g | Keysym::G => Some(Key::G),
-        Keysym::h | Keysym::H => Some(Key::H),
-        Keysym::i | Keysym::I => Some(Key::I),
-        Keysym::j | Keysym::J => Some(Key::J),
-        Keysym::k | Keysym::K => Some(Key::K),
-        Keysym::l | Keysym::L => Some(Key::L),
-        Keysym::m | Keysym::M => Some(Key::M),
-        Keysym::n | Keysym::N => Some(Key::N),
-        Keysym::o | Keysym::O => Some(Key::O),
-        Keysym::p | Keysym::P => Some(Key::P),
-        Keysym::q | Keysym::Q => Some(Key::Q),
-        Keysym::r | Keysym::R => Some(Key::R),
-        Keysym::s | Keysym::S => Some(Key::S),
-        Keysym::t | Keysym::T => Some(Key::T),
-        Keysym::u | Keysym::U => Some(Key::U),
-        Keysym::v | Keysym::V => Some(Key::V),
-        Keysym::w | Keysym::W => Some(Key::W),
-        Keysym::x | Keysym::X => Some(Key::X),
-        Keysym::y | Keysym::Y => Some(Key::Y),
-        Keysym::z | Keysym::Z => Some(Key::Z),
-        Keysym::F1 => Some(Key::F1),
-        Keysym::F2 => Some(Key::F2),
-        Keysym::F3 => Some(Key::F3),
-        Keysym::F4 => Some(Key::F4),
-        Keysym::F5 => Some(Key::F5),
-        Keysym::F6 => Some(Key::F6),
-        Keysym::F7 => Some(Key::F7),
-        Keysym::F8 => Some(Key::F8),
-        Keysym::F9 => Some(Key::F9),
-        Keysym::F10 => Some(Key::F10),
-        Keysym::F11 => Some(Key::F11),
-        Keysym::F12 => Some(Key::F12),
-        Keysym::F13 => Some(Key::F13),
-        Keysym::F14 => Some(Key::F14),
-        Keysym::F15 => Some(Key::F15),
-        Keysym::F16 => Some(Key::F16),
-        Keysym::F17 => Some(Key::F17),
-        Keysym::F18 => Some(Key::F18),
-        Keysym::F19 => Some(Key::F19),
-        Keysym::F20 => Some(Key::F20),
-        Keysym::F21 => Some(Key::F21),
-        Keysym::F22 => Some(Key::F22),
-        Keysym::F23 => Some(Key::F23),
-        Keysym::F24 => Some(Key::F24),
-        Keysym::F25 => Some(Key::F25),
-        Keysym::F26 => Some(Key::F26),
-        Keysym::F27 => Some(Key::F27),
-        Keysym::F28 => Some(Key::F28),
-        Keysym::F29 => Some(Key::F29),
-        Keysym::F30 => Some(Key::F30),
-        Keysym::F31 => Some(Key::F31),
-        Keysym::F32 => Some(Key::F32),
-        Keysym::F33 => Some(Key::F33),
-        Keysym::F34 => Some(Key::F34),
-        Keysym::F35 => Some(Key::F35),
-        Keysym::Shift_L
-        | Keysym::Shift_R
-        | Keysym::Control_L
-        | Keysym::Control_R
-        | Keysym::Super_L
-        | Keysym::Super_R => None,
-        _ => {
-            eprintln!("dont get it: {sym:?}; {:?}", sym.name());
-            None
-        }
-    }
-}
-
-fn pointer_button_to_egui(button: u32) -> PointerButton {
-    match button {
-        sctk::seat::pointer::BTN_LEFT => PointerButton::Primary,
-        sctk::seat::pointer::BTN_RIGHT => PointerButton::Secondary,
-        sctk::seat::pointer::BTN_MIDDLE => PointerButton::Middle,
-        sctk::seat::pointer::BTN_BACK => PointerButton::Extra1,
-        sctk::seat::pointer::BTN_FORWARD => PointerButton::Extra2,
-        _ => PointerButton::Primary,
-    }
-}

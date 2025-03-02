@@ -1,6 +1,7 @@
-use windowing::{egui, Client};
+use windowing::egui;
 use windowing::sctk::shell::wlr_layer::Anchor;
-use windowing::{LayerShellOptions, LayerWindowing};
+use windowing::LayerShellOptions;
+use windowing::client::Client;
 
 pub async fn run() -> anyhow::Result<()> {
     let mut window = Client::create(
