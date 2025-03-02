@@ -475,7 +475,7 @@ impl<A> KeyboardHandler for LayerWindowing<A> {
         _surface: &protocol::wl_surface::WlSurface,
         _: u32,
         _: &[u32],
-        keysyms: &[Keysym], // TODO
+        _keysyms: &[Keysym],
     ) {
         log::trace!("keyboard enter");
         self.focused = true;
@@ -553,6 +553,7 @@ impl<A> KeyboardHandler for LayerWindowing<A> {
         modifiers: Modifiers,
         _layout: u32,
     ) {
+        log::trace!("keyboard modifiers {:?}", modifiers);
         self.modifiers = egui::Modifiers {
             alt: modifiers.alt,
             ctrl: modifiers.ctrl,
@@ -673,16 +674,16 @@ fn keysym_to_key(sym: Keysym) -> Option<Key> {
         Keysym::equal => Some(Key::Equals),
         Keysym::semicolon => Some(Key::Semicolon),
         Keysym::apostrophe => Some(Key::Quote),
-        // Keysym::Num0 => Key::Num0, TODO
-        // Keysym::Num1 => Key::Num1,
-        // Keysym::Num2 => Key::Num2,
-        // Keysym::Num3 => Key::Num3,
-        // Keysym::Num4 => Key::Num4,
-        // Keysym::Num5 => Key::Num5,
-        // Keysym::Num6 => Key::Num6,
-        // Keysym::Num7 => Key::Num7,
-        // Keysym::Num8 => Key::Num8,
-        // Keysym::Num9 => Key::Num9,
+        Keysym::_0 => Some(Key::Num0),
+        Keysym::_1 => Some(Key::Num1),
+        Keysym::_2 => Some(Key::Num2),
+        Keysym::_3 => Some(Key::Num3),
+        Keysym::_4 => Some(Key::Num4),
+        Keysym::_5 => Some(Key::Num5),
+        Keysym::_6 => Some(Key::Num6),
+        Keysym::_7 => Some(Key::Num7),
+        Keysym::_8 => Some(Key::Num8),
+        Keysym::_9 => Some(Key::Num9),
         Keysym::a | Keysym::A => Some(Key::A),
         Keysym::b | Keysym::B => Some(Key::B),
         Keysym::c | Keysym::C => Some(Key::C),
