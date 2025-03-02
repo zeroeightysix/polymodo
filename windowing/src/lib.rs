@@ -1,4 +1,4 @@
-mod app;
+pub mod app;
 
 use derive_more::with_trait::From;
 use derive_more::{Display, Error};
@@ -27,6 +27,9 @@ use std::fmt::Debug;
 use std::ptr::NonNull;
 use wgpu::rwh::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle};
 
+pub use egui;
+pub use smithay_client_toolkit as sctk;
+
 #[derive(Debug, Display, Error, From)]
 pub enum LayerWindowingError {
     NotWayland,
@@ -49,18 +52,20 @@ pub struct LayerWindowing<A> {
     width: u32,
     height: u32,
     layer: LayerSurface,
+    focused: bool,
     keyboard: Option<protocol::wl_keyboard::WlKeyboard>,
     pointer: Option<protocol::wl_pointer::WlPointer>,
-    events: Vec<egui::Event>,
-    modifiers: egui::Modifiers,
+    pub events: Vec<egui::Event>,
+    start_time: std::time::Instant,
 
-    ctx: Context,
+    modifiers: egui::Modifiers,
     render_state: RenderState,
     surface: wgpu::Surface<'static>,
-    app: A,
+    pub ctx: Context,
+    pub app: A,
 }
 
-impl<A: app::App> LayerWindowing<A> {
+impl<A> LayerWindowing<A> {
     fn configure_surface(&self) {
         let format = self.render_state.target_format;
         self.surface.configure(
@@ -82,86 +87,6 @@ impl<A: app::App> LayerWindowing<A> {
         self.width = width;
         self.height = height;
         self.configure_surface();
-    }
-
-    fn render(&mut self) -> Result<(), LayerWindowingError> {
-        let output_frame = self.surface.get_current_texture()?;
-        let output_view = output_frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .render_state
-            .device
-            .create_command_encoder(&Default::default());
-        let mut pass = encoder
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &output_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), // TODO: this doesn't work; the texture is black instead
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            })
-            .forget_lifetime();
-
-        let events = std::mem::take(&mut self.events);
-        
-        let raw_input = egui::RawInput {
-            screen_rect: Some(Rect::from_min_size(Default::default(), (self.width as f32, self.height as f32).into())),
-            modifiers: self.modifiers,
-            events,
-            ..Default::default()
-        };
-        let output = self.ctx.run(raw_input, |ctx| {
-            self.app.update(ctx);
-        });
-        // TODO: output.platform_output
-        let prims = self.ctx.tessellate(output.shapes, output.pixels_per_point);
-        {
-            let mut renderer = self.render_state.renderer.write();
-            let descriptor = ScreenDescriptor {
-                size_in_pixels: [self.width, self.height],
-                pixels_per_point: output.pixels_per_point,
-            };
-            for (id, delta) in output.textures_delta.set {
-                renderer.update_texture(
-                    &self.render_state.device,
-                    &self.render_state.queue,
-                    id,
-                    &delta,
-                );
-            }
-            renderer.update_buffers(
-                &self.render_state.device,
-                &self.render_state.queue,
-                &mut encoder,
-                &prims,
-                &descriptor,
-            );
-            renderer.render(&mut pass, &prims, &descriptor);
-        }
-        drop(pass);
-
-        self.render_state
-            .queue
-            .submit(std::iter::once(encoder.finish()));
-
-        {
-            let mut renderer = self.render_state.renderer.write();
-            for id in &output.textures_delta.free {
-                renderer.free_texture(id);
-            }
-        }
-
-        output_frame.present();
-
-        Ok(())
     }
 
     pub async fn create(
@@ -228,10 +153,12 @@ impl<A: app::App> LayerWindowing<A> {
             width,
             height,
             layer,
+            focused: false,
             keyboard: None,
             pointer: None,
 
             events: vec![],
+            start_time: std::time::Instant::now(),
             modifiers: Default::default(),
             ctx,
             render_state,
@@ -243,17 +170,121 @@ impl<A: app::App> LayerWindowing<A> {
 
         Ok((event_queue, state))
     }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn focused(&self) -> bool {
+        self.focused
+    }
+}
+
+impl<A: app::App> LayerWindowing<A> {
+    pub fn render(&mut self) -> Result<(), LayerWindowingError> {
+        let output_frame = self.surface.get_current_texture()?;
+        let output_view = output_frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .render_state
+            .device
+            .create_command_encoder(&Default::default());
+        let mut pass = encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &output_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 1.0,
+                            b: 0.0,
+                            a: 0.1,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            })
+            .forget_lifetime();
+
+        let events = std::mem::take(&mut self.events);
+
+        let raw_input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(
+                Default::default(),
+                (self.width as f32, self.height as f32).into(),
+            )),
+            modifiers: self.modifiers,
+            focused: self.focused,
+            time: Some((std::time::Instant::now() - self.start_time).as_secs_f64()),
+            events,
+            ..Default::default()
+        };
+        let output = self.ctx.run(raw_input, |ctx| {
+            self.app.update(ctx);
+        });
+        // TODO: output.platform_output
+        let prims = self.ctx.tessellate(output.shapes, output.pixels_per_point);
+        {
+            let mut renderer = self.render_state.renderer.write();
+            let descriptor = ScreenDescriptor {
+                size_in_pixels: [self.width, self.height],
+                pixels_per_point: output.pixels_per_point,
+            };
+            for (id, delta) in output.textures_delta.set {
+                renderer.update_texture(
+                    &self.render_state.device,
+                    &self.render_state.queue,
+                    id,
+                    &delta,
+                );
+            }
+            renderer.update_buffers(
+                &self.render_state.device,
+                &self.render_state.queue,
+                &mut encoder,
+                &prims,
+                &descriptor,
+            );
+            renderer.render(&mut pass, &prims, &descriptor);
+        }
+        drop(pass);
+
+        self.render_state
+            .queue
+            .submit(std::iter::once(encoder.finish()));
+
+        {
+            let mut renderer = self.render_state.renderer.write();
+            for id in &output.textures_delta.free {
+                renderer.free_texture(id);
+            }
+        }
+
+        output_frame.present();
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct LayerShellOptions<'a> {
-    wgpu_setup: WgpuSetup,
-    wgpu_options: WgpuConfiguration,
-    layer: Layer,
-    namespace: Option<&'a str>,
-    anchor: Anchor,
-    width: u32,
-    height: u32,
+    pub wgpu_setup: WgpuSetup,
+    pub wgpu_options: WgpuConfiguration,
+    pub layer: Layer,
+    pub namespace: Option<&'a str>,
+    pub anchor: Anchor,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl Default for LayerShellOptions<'_> {
@@ -394,7 +425,6 @@ impl<A: 'static> SeatHandler for LayerWindowing<A> {
         capability: Capability,
     ) {
         if capability == Capability::Keyboard && self.keyboard.is_none() {
-            println!("Set keyboard capability");
             let keyboard = self
                 .seat_state
                 .get_keyboard(qh, &seat, None)
@@ -403,7 +433,6 @@ impl<A: 'static> SeatHandler for LayerWindowing<A> {
         }
 
         if capability == Capability::Pointer && self.pointer.is_none() {
-            println!("Set pointer capability");
             let pointer = self
                 .seat_state
                 .get_pointer(qh, &seat)
@@ -445,6 +474,7 @@ impl<A> KeyboardHandler for LayerWindowing<A> {
         _: &[u32],
         keysyms: &[Keysym], // TODO
     ) {
+        self.focused = true;
         self.events.push(egui::Event::WindowFocused(true));
     }
 
@@ -453,9 +483,10 @@ impl<A> KeyboardHandler for LayerWindowing<A> {
         _: &Connection,
         _: &QueueHandle<Self>,
         _: &protocol::wl_keyboard::WlKeyboard,
-        surface: &protocol::wl_surface::WlSurface,
+        _surface: &protocol::wl_surface::WlSurface,
         _: u32,
     ) {
+        self.focused = false;
         self.events.push(egui::Event::WindowFocused(false));
     }
 
@@ -467,16 +498,21 @@ impl<A> KeyboardHandler for LayerWindowing<A> {
         _: u32,
         event: KeyEvent,
     ) {
-        println!("Key press: {event:?}");
-        if event.keysym == Keysym::Escape {
-            self.exit = true;
-        }
         let key = keysym_to_key(event.keysym);
         if let Some(t) = event.utf8 {
-            // TODO: check if t is \n? if so, don't send an event
-            self.events.push(egui::Event::Text(t));
+            if !(t.is_empty() || t.chars().all(|c| c.is_ascii_control())) {
+                self.events.push(egui::Event::Text(t));
+            }
         }
-        println!("{} {key:?}", event.raw_code);
+        if let Some(key) = key {
+            self.events.push(egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                modifiers: self.modifiers,
+                repeat: false,
+            })
+        }
     }
 
     fn release_key(
@@ -488,7 +524,16 @@ impl<A> KeyboardHandler for LayerWindowing<A> {
         event: KeyEvent,
     ) {
         let key = keysym_to_key(event.keysym);
-        println!("{} {key:?}", event.raw_code);
+        if let Some(key) = key {
+            self.events.push(egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: false,
+                modifiers: self.modifiers,
+                repeat: false,
+            })
+        }
+        // println!("{} {key:?}", event.raw_code);
     }
 
     fn update_modifiers(
@@ -500,7 +545,13 @@ impl<A> KeyboardHandler for LayerWindowing<A> {
         modifiers: Modifiers,
         _layout: u32,
     ) {
-        println!("Update modifiers: {modifiers:?}");
+        self.modifiers = egui::Modifiers {
+            alt: modifiers.alt,
+            ctrl: modifiers.ctrl,
+            shift: modifiers.shift,
+            mac_cmd: false,
+            command: false,
+        }
     }
 }
 
@@ -584,180 +635,115 @@ delegate_registry!(@<A: (app::App) + 'static> LayerWindowing<A>);
 
 fn keysym_to_key(sym: Keysym) -> Option<Key> {
     match sym {
-        Keysym::backslash => return Some(Key::Backslash),
-        Keysym::minus => return Some(Key::Minus),
-
-        _ => (),
-    };
-
-    let name = sym.name().map(|v| v.trim_start_matches("XK_"));
-    if let Some(name) = name {
-        if let Some(key) = Key::from_name(name) {
-            return Some(key);
+        Keysym::Down => Some(Key::ArrowDown),
+        Keysym::Left => Some(Key::ArrowLeft),
+        Keysym::Right => Some(Key::ArrowRight),
+        Keysym::Up => Some(Key::ArrowUp),
+        Keysym::Escape => Some(Key::Escape),
+        Keysym::Tab => Some(Key::Tab),
+        Keysym::BackSpace => Some(Key::Backspace),
+        Keysym::Return => Some(Key::Enter),
+        Keysym::space => Some(Key::Space),
+        Keysym::Insert => Some(Key::Insert),
+        Keysym::Delete => Some(Key::Delete),
+        Keysym::Home => Some(Key::Home),
+        Keysym::End => Some(Key::End),
+        Keysym::Prior => Some(Key::PageUp),
+        Keysym::Next => Some(Key::PageDown),
+        // Keysym::Copy => Key::Copy,
+        // Keysym::Cut => Key::Cut,
+        // Keysym::Paste => Key::Paste,
+        Keysym::colon => Some(Key::Colon),
+        Keysym::comma => Some(Key::Comma),
+        Keysym::slash => Some(Key::Slash),
+        Keysym::bar => Some(Key::Pipe),
+        Keysym::question => Some(Key::Questionmark),
+        Keysym::exclam => Some(Key::Exclamationmark),
+        Keysym::bracketleft => Some(Key::OpenBracket),
+        Keysym::bracketright => Some(Key::CloseBracket),
+        Keysym::braceleft => Some(Key::OpenCurlyBracket),
+        Keysym::braceright => Some(Key::CloseCurlyBracket),
+        Keysym::grave => Some(Key::Backtick),
+        Keysym::period => Some(Key::Period),
+        Keysym::plus => Some(Key::Plus),
+        Keysym::equal => Some(Key::Equals),
+        Keysym::semicolon => Some(Key::Semicolon),
+        Keysym::apostrophe => Some(Key::Quote),
+        // Keysym::Num0 => Key::Num0, TODO
+        // Keysym::Num1 => Key::Num1,
+        // Keysym::Num2 => Key::Num2,
+        // Keysym::Num3 => Key::Num3,
+        // Keysym::Num4 => Key::Num4,
+        // Keysym::Num5 => Key::Num5,
+        // Keysym::Num6 => Key::Num6,
+        // Keysym::Num7 => Key::Num7,
+        // Keysym::Num8 => Key::Num8,
+        // Keysym::Num9 => Key::Num9,
+        Keysym::a | Keysym::A => Some(Key::A),
+        Keysym::b | Keysym::B => Some(Key::B),
+        Keysym::c | Keysym::C => Some(Key::C),
+        Keysym::d | Keysym::D => Some(Key::D),
+        Keysym::e | Keysym::E => Some(Key::E),
+        Keysym::f | Keysym::F => Some(Key::F),
+        Keysym::g | Keysym::G => Some(Key::G),
+        Keysym::h | Keysym::H => Some(Key::H),
+        Keysym::i | Keysym::I => Some(Key::I),
+        Keysym::j | Keysym::J => Some(Key::J),
+        Keysym::k | Keysym::K => Some(Key::K),
+        Keysym::l | Keysym::L => Some(Key::L),
+        Keysym::m | Keysym::M => Some(Key::M),
+        Keysym::n | Keysym::N => Some(Key::N),
+        Keysym::o | Keysym::O => Some(Key::O),
+        Keysym::p | Keysym::P => Some(Key::P),
+        Keysym::q | Keysym::Q => Some(Key::Q),
+        Keysym::r | Keysym::R => Some(Key::R),
+        Keysym::s | Keysym::S => Some(Key::S),
+        Keysym::t | Keysym::T => Some(Key::T),
+        Keysym::u | Keysym::U => Some(Key::U),
+        Keysym::v | Keysym::V => Some(Key::V),
+        Keysym::w | Keysym::W => Some(Key::W),
+        Keysym::x | Keysym::X => Some(Key::X),
+        Keysym::y | Keysym::Y => Some(Key::Y),
+        Keysym::z | Keysym::Z => Some(Key::Z),
+        Keysym::F1 => Some(Key::F1),
+        Keysym::F2 => Some(Key::F2),
+        Keysym::F3 => Some(Key::F3),
+        Keysym::F4 => Some(Key::F4),
+        Keysym::F5 => Some(Key::F5),
+        Keysym::F6 => Some(Key::F6),
+        Keysym::F7 => Some(Key::F7),
+        Keysym::F8 => Some(Key::F8),
+        Keysym::F9 => Some(Key::F9),
+        Keysym::F10 => Some(Key::F10),
+        Keysym::F11 => Some(Key::F11),
+        Keysym::F12 => Some(Key::F12),
+        Keysym::F13 => Some(Key::F13),
+        Keysym::F14 => Some(Key::F14),
+        Keysym::F15 => Some(Key::F15),
+        Keysym::F16 => Some(Key::F16),
+        Keysym::F17 => Some(Key::F17),
+        Keysym::F18 => Some(Key::F18),
+        Keysym::F19 => Some(Key::F19),
+        Keysym::F20 => Some(Key::F20),
+        Keysym::F21 => Some(Key::F21),
+        Keysym::F22 => Some(Key::F22),
+        Keysym::F23 => Some(Key::F23),
+        Keysym::F24 => Some(Key::F24),
+        Keysym::F25 => Some(Key::F25),
+        Keysym::F26 => Some(Key::F26),
+        Keysym::F27 => Some(Key::F27),
+        Keysym::F28 => Some(Key::F28),
+        Keysym::F29 => Some(Key::F29),
+        Keysym::F30 => Some(Key::F30),
+        Keysym::F31 => Some(Key::F31),
+        Keysym::F32 => Some(Key::F32),
+        Keysym::F33 => Some(Key::F33),
+        Keysym::F34 => Some(Key::F34),
+        Keysym::F35 => Some(Key::F35),
+        Keysym::Shift_L | Keysym::Shift_R | Keysym::Control_L | Keysym::Control_R => None,
+        _ => {
+            eprintln!("dont get it: {sym:?}; {:?}", sym.name());
+            None
         }
-    }
-
-    eprintln!("invalid key {sym:?}");
-
-    None
-
-    // match sym {
-    //     Keysym::Down => Some(Key::ArrowDown),
-    //     Keysym::Left => Some(Key::ArrowLeft),
-    //     Keysym::Right => Some(Key::ArrowRight),
-    //     Keysym::Up => Some(Key::ArrowUp),
-    //     Keysym::Escape => Some(Key::Escape),
-    //     Keysym::Tab => Some(Key::Tab),
-    //     Keysym::BackSpace => Some(Key::Backspace),
-    //     Keysym::Return => Some(Key::Enter),
-    //     Keysym::space => Some(Key::Space),
-    //     Keysym::Insert => Some(Key::Insert),
-    //     Keysym::Delete => Some(Key::Delete),
-    //     Keysym::Home => Some(Key::Home),
-    //     Keysym::End => Some(Key::End),
-    //     Keysym::Prior => Some(Key::PageUp),
-    //     Keysym::Next => Some(Key::PageDown),
-    //     // Keysym::Copy => Key::Copy,
-    //     // Keysym::Cut => Key::Cut,
-    //     // Keysym::Paste => Key::Paste,
-    //     Keysym::colon => Some(Key::Colon),
-    //     Keysym::comma => Some(Key::Comma),
-    //     Keysym::slash => Some(Key::Slash),
-    //     Keysym::bar => Some(Key::Pipe),
-    //     Keysym::question => Some(Key::Questionmark),
-    //     Keysym::exclam => Some(Key::Exclamationmark),
-    //     Keysym::bracketleft => Some(Key::OpenBracket),
-    //     Keysym::bracketright => Some(Key::CloseBracket),
-    //     Keysym::braceleft => Some(Key::OpenCurlyBracket),
-    //     Keysym::braceright => Some(Key::CloseCurlyBracket),
-    //     Keysym::grave => Some(Key::Backtick),
-    //     Keysym::period => Some(Key::Period),
-    //     Keysym::plus => Some(Key::Plus),
-    //     Keysym::equal => Some(Key::Equals),
-    //     Keysym::semicolon => Some(Key::Semicolon),
-    //     Keysym::apostrophe => Some(Key::Quote),
-    //     // Keysym::Num0 => Key::Num0, TODO
-    //     // Keysym::Num1 => Key::Num1,
-    //     // Keysym::Num2 => Key::Num2,
-    //     // Keysym::Num3 => Key::Num3,
-    //     // Keysym::Num4 => Key::Num4,
-    //     // Keysym::Num5 => Key::Num5,
-    //     // Keysym::Num6 => Key::Num6,
-    //     // Keysym::Num7 => Key::Num7,
-    //     // Keysym::Num8 => Key::Num8,
-    //     // Keysym::Num9 => Key::Num9,
-    //     Keysym::A => Some(Key::A),
-    //     Keysym::B => Some(Key::B),
-    //     Keysym::C => Some(Key::C),
-    //     Keysym::D => Some(Key::D),
-    //     Keysym::E => Some(Key::E),
-    //     Keysym::F => Some(Key::F),
-    //     Keysym::G => Some(Key::G),
-    //     Keysym::H => Some(Key::H),
-    //     Keysym::I => Some(Key::I),
-    //     Keysym::J => Some(Key::J),
-    //     Keysym::K => Some(Key::K),
-    //     Keysym::L => Some(Key::L),
-    //     Keysym::M => Some(Key::M),
-    //     Keysym::N => Some(Key::N),
-    //     Keysym::O => Some(Key::O),
-    //     Keysym::P => Some(Key::P),
-    //     Keysym::Q => Some(Key::Q),
-    //     Keysym::R => Some(Key::R),
-    //     Keysym::S => Some(Key::S),
-    //     Keysym::T => Some(Key::T),
-    //     Keysym::U => Some(Key::U),
-    //     Keysym::V => Some(Key::V),
-    //     Keysym::W => Some(Key::W),
-    //     Keysym::X => Some(Key::X),
-    //     Keysym::Y => Some(Key::Y),
-    //     Keysym::Z => Some(Key::Z),
-    //     Keysym::F1 => Some(Key::F1),
-    //     Keysym::F2 => Some(Key::F2),
-    //     Keysym::F3 => Some(Key::F3),
-    //     Keysym::F4 => Some(Key::F4),
-    //     Keysym::F5 => Some(Key::F5),
-    //     Keysym::F6 => Some(Key::F6),
-    //     Keysym::F7 => Some(Key::F7),
-    //     Keysym::F8 => Some(Key::F8),
-    //     Keysym::F9 => Some(Key::F9),
-    //     Keysym::F10 => Some(Key::F10),
-    //     Keysym::F11 => Some(Key::F11),
-    //     Keysym::F12 => Some(Key::F12),
-    //     Keysym::F13 => Some(Key::F13),
-    //     Keysym::F14 => Some(Key::F14),
-    //     Keysym::F15 => Some(Key::F15),
-    //     Keysym::F16 => Some(Key::F16),
-    //     Keysym::F17 => Some(Key::F17),
-    //     Keysym::F18 => Some(Key::F18),
-    //     Keysym::F19 => Some(Key::F19),
-    //     Keysym::F20 => Some(Key::F20),
-    //     Keysym::F21 => Some(Key::F21),
-    //     Keysym::F22 => Some(Key::F22),
-    //     Keysym::F23 => Some(Key::F23),
-    //     Keysym::F24 => Some(Key::F24),
-    //     Keysym::F25 => Some(Key::F25),
-    //     Keysym::F26 => Some(Key::F26),
-    //     Keysym::F27 => Some(Key::F27),
-    //     Keysym::F28 => Some(Key::F28),
-    //     Keysym::F29 => Some(Key::F29),
-    //     Keysym::F30 => Some(Key::F30),
-    //     Keysym::F31 => Some(Key::F31),
-    //     Keysym::F32 => Some(Key::F32),
-    //     Keysym::F33 => Some(Key::F33),
-    //     Keysym::F34 => Some(Key::F34),
-    //     Keysym::F35 => Some(Key::F35),
-    //     _ => {
-    //         eprintln!("dont get it: {sym:?}; {:?}", sym.name());
-    //
-    //
-    //     }
-    // }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::*;
-    use smithay_client_toolkit::shell::wlr_layer::Anchor;
-
-    #[test]
-    fn it_works() {
-        struct CoolApp;
-
-        impl app::App for CoolApp {
-            fn update(&mut self, ctx: &Context) {
-                egui::Window::new("Hello").show(ctx, |ui| {
-                    ui.label("Hello");
-                });
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    if ui.button("Hello").clicked() {
-                        println!("Hello");
-                    }
-                });
-            }
-        }
-
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-
-        runtime.block_on(async {
-            let (mut eq, mut lst) = LayerWindowing::create(
-                LayerShellOptions {
-                    anchor: Anchor::empty(),
-                    ..Default::default()
-                },
-                CoolApp,
-            )
-            .await
-            .unwrap();
-
-            loop {
-                eq.blocking_dispatch(&mut lst).unwrap();
-
-                if lst.exit {
-                    eprintln!("stop alive");
-                    break;
-                }
-            }
-        })
     }
 }
