@@ -14,6 +14,7 @@ strum = { version = "0.26.3", features = ["derive"] }
 xdg = "2.5.2"
 nucleo = "0.5.0"
 windowing = { path = "windowing" }
+log = "0.4.22"
 
 [workspace]
 members = ["windowing"]

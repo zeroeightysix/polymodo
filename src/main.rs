@@ -8,7 +8,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::WARN.into())
         .from_env_lossy();
@@ -20,7 +21,7 @@ fn main() -> anyhow::Result<()> {
 
     log_panics::init();
 
-    app::run()?;
+    app::run().await?;
 
     Ok(())
 }

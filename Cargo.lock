@@ -1015,6 +1015,7 @@ name = "polymodo"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "log",
  "log-panics",
  "nucleo",
  "rust-ini",
