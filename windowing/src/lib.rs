@@ -611,7 +611,7 @@ impl<A> PointerHandler for LayerWindowing<A> {
                     ..
                 } => self.events.push(egui::Event::MouseWheel {
                     unit: MouseWheelUnit::Point,
-                    delta: (horizontal.absolute as f32, vertical.absolute as f32).into(),
+                    delta: (horizontal.absolute as f32, -vertical.absolute as f32).into(),
                     modifiers: self.modifiers,
                 }),
             }
