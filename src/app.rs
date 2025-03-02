@@ -1,11 +1,9 @@
-use std::io::ErrorKind;
-use windowing::egui;
-use windowing::sctk::reexports::client::backend::WaylandError;
+use windowing::{egui, Client};
 use windowing::sctk::shell::wlr_layer::Anchor;
 use windowing::{LayerShellOptions, LayerWindowing};
 
 pub async fn run() -> anyhow::Result<()> {
-    let (mut eq, mut lst) = LayerWindowing::create(
+    let mut window = Client::create(
         LayerShellOptions {
             anchor: Anchor::empty(),
             width: 250,
@@ -17,30 +15,7 @@ pub async fn run() -> anyhow::Result<()> {
     .await?;
 
     loop {
-        let dispatched = eq.dispatch_pending(&mut lst)?;
-        if dispatched > 0 {
-            continue;
-        }
-
-        eq.flush()?;
-
-        if !lst.events.is_empty() || lst.ctx.has_requested_repaint() {
-            lst.render()?;
-        }
-
-        if let Some(events) = eq.prepare_read() {
-            let fd = events.connection_fd().try_clone_to_owned()?;
-            let async_fd = tokio::io::unix::AsyncFd::new(fd)?;
-            let mut ready_guard = async_fd.readable().await?;
-            match events.read() {
-                Ok(_) => {
-                    ready_guard.clear_ready();
-                }
-                Err(WaylandError::Io(e)) if e.kind() == ErrorKind::WouldBlock => {}
-                Err(e) => Err(e)?,
-            }
-            drop(ready_guard);
-        }
+        window.update().await?;
     }
 }
 

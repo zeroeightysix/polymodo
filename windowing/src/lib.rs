@@ -24,11 +24,13 @@ use smithay_client_toolkit::{
     delegate_registry, delegate_seat, registry_handlers,
 };
 use std::fmt::Debug;
+use std::io::ErrorKind;
 use std::ptr::NonNull;
 use wgpu::rwh::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle};
 
 pub use egui;
 pub use smithay_client_toolkit as sctk;
+use wayland_backend::client::WaylandError;
 
 #[derive(Debug, Display, Error, From)]
 pub enum LayerWindowingError {
@@ -40,6 +42,9 @@ pub enum LayerWindowingError {
     SurfaceError(wgpu::SurfaceError),
     CreateSurfaceError(wgpu::CreateSurfaceError),
     WgpuError(WgpuError),
+    WaylandError(wayland_backend::client::WaylandError),
+    DispatchError(sctk::reexports::client::DispatchError),
+    IoError(std::io::Error),
 }
 
 pub struct LayerWindowing<A> {
@@ -65,30 +70,57 @@ pub struct LayerWindowing<A> {
     pub app: A,
 }
 
+pub struct Client<A> {
+    event_queue: EventQueue<LayerWindowing<A>>,
+    layer_windowing: LayerWindowing<A>,
+}
+
+impl<A: app::App + 'static> Client<A> {
+    pub async fn create(
+        options: LayerShellOptions<'_>,
+        app: A
+    ) -> Result<Self, LayerWindowingError> {
+        let (event_queue, layer_windowing) = LayerWindowing::create(options, app).await?;
+
+        Ok(Self {
+            event_queue,
+            layer_windowing,
+        })
+    }
+
+    pub async fn update(&mut self) -> Result<(), LayerWindowingError> {
+        let eq = &mut self.event_queue;
+        let windowing = &mut self.layer_windowing;
+        let dispatched = eq.dispatch_pending(windowing)?;
+        if dispatched > 0 {
+            return Ok(());
+        }
+
+        eq.flush()?;
+
+        if !windowing.events.is_empty() || windowing.ctx.has_requested_repaint() {
+            windowing.render()?;
+        }
+
+        if let Some(events) = eq.prepare_read() {
+            let fd = events.connection_fd().try_clone_to_owned()?;
+            let async_fd = tokio::io::unix::AsyncFd::new(fd)?;
+            let mut ready_guard = async_fd.readable().await?;
+            match events.read() {
+                Ok(_) => {
+                    ready_guard.clear_ready();
+                }
+                Err(WaylandError::Io(e)) if e.kind() == ErrorKind::WouldBlock => {}
+                Err(e) => Err(e)?,
+            }
+            drop(ready_guard);
+        }
+
+        Ok(())
+    }
+}
+
 impl<A> LayerWindowing<A> {
-    fn configure_surface(&self) {
-        let format = self.render_state.target_format;
-        let (width, height) = self.size;
-        self.surface.configure(
-            &self.render_state.device,
-            &wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format,
-                view_formats: vec![format.add_srgb_suffix()],
-                alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied,
-                width,
-                height,
-                desired_maximum_frame_latency: 2,
-                present_mode: wgpu::PresentMode::Mailbox,
-            },
-        );
-    }
-
-    fn update_size(&mut self, width: u32, height: u32) {
-        self.size = (width, height);
-        self.configure_surface();
-    }
-
     pub async fn create(
         LayerShellOptions {
             wgpu_setup,
@@ -100,7 +132,7 @@ impl<A> LayerWindowing<A> {
             height,
         }: LayerShellOptions<'_>,
         app: A,
-    ) -> Result<(EventQueue<LayerWindowing<A>>, LayerWindowing<A>), LayerWindowingError>
+    ) -> Result<(EventQueue<Self>, Self), LayerWindowingError>
     where
         A: 'static + app::App,
     {
@@ -169,6 +201,29 @@ impl<A> LayerWindowing<A> {
         state.configure_surface();
 
         Ok((event_queue, state))
+    }
+
+    fn configure_surface(&self) {
+        let format = self.render_state.target_format;
+        let (width, height) = self.size;
+        self.surface.configure(
+            &self.render_state.device,
+            &wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format,
+                view_formats: vec![format.add_srgb_suffix()],
+                alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied,
+                width,
+                height,
+                desired_maximum_frame_latency: 2,
+                present_mode: wgpu::PresentMode::Mailbox,
+            },
+        );
+    }
+
+    fn update_size(&mut self, width: u32, height: u32) {
+        self.size = (width, height);
+        self.configure_surface();
     }
 
     pub fn size(&self) -> (u32, u32) {
