@@ -29,7 +29,6 @@ use wgpu::rwh::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, Wayland
 
 pub use egui;
 pub use smithay_client_toolkit as sctk;
-use log::log;
 
 #[derive(Debug, Display, Error, From)]
 pub enum LayerWindowingError {
@@ -50,8 +49,8 @@ pub struct LayerWindowing<A> {
 
     exit: bool,
     first_configure: bool,
-    width: u32,
-    height: u32,
+    default_size: Option<(u32, u32)>,
+    size: (u32, u32),
     layer: LayerSurface,
     focused: bool,
     keyboard: Option<protocol::wl_keyboard::WlKeyboard>,
@@ -69,6 +68,7 @@ pub struct LayerWindowing<A> {
 impl<A> LayerWindowing<A> {
     fn configure_surface(&self) {
         let format = self.render_state.target_format;
+        let (width, height) = self.size;
         self.surface.configure(
             &self.render_state.device,
             &wgpu::SurfaceConfiguration {
@@ -76,8 +76,8 @@ impl<A> LayerWindowing<A> {
                 format,
                 view_formats: vec![format.add_srgb_suffix()],
                 alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied,
-                width: self.width,
-                height: self.height,
+                width,
+                height,
                 desired_maximum_frame_latency: 2,
                 present_mode: wgpu::PresentMode::Mailbox,
             },
@@ -85,8 +85,7 @@ impl<A> LayerWindowing<A> {
     }
 
     fn update_size(&mut self, width: u32, height: u32) {
-        self.width = width;
-        self.height = height;
+        self.size = (width, height);
         self.configure_surface();
     }
 
@@ -151,8 +150,8 @@ impl<A> LayerWindowing<A> {
             output_state: OutputState::new(&globals, &qh),
             exit: false,
             first_configure: true,
-            width,
-            height,
+            default_size: Some((width, height)),
+            size: (width, height),
             layer,
             focused: false,
             keyboard: None,
@@ -172,12 +171,8 @@ impl<A> LayerWindowing<A> {
         Ok((event_queue, state))
     }
 
-    pub fn width(&self) -> u32 {
-        self.width
-    }
-
-    pub fn height(&self) -> u32 {
-        self.height
+    pub fn size(&self) -> (u32, u32) {
+        self.size
     }
 
     pub fn focused(&self) -> bool {
@@ -222,7 +217,7 @@ impl<A: app::App> LayerWindowing<A> {
         let raw_input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(
                 Default::default(),
-                (self.width as f32, self.height as f32).into(),
+                (self.size.0 as f32, self.size.1 as f32).into(),
             )),
             modifiers: self.modifiers,
             focused: self.focused,
@@ -238,7 +233,7 @@ impl<A: app::App> LayerWindowing<A> {
         {
             let mut renderer = self.render_state.renderer.write();
             let descriptor = ScreenDescriptor {
-                size_in_pixels: [self.width, self.height],
+                size_in_pixels: self.size.into(),
                 pixels_per_point: output.pixels_per_point,
             };
             for (id, delta) in output.textures_delta.set {
@@ -395,13 +390,18 @@ impl<A: app::App> LayerShellHandler for LayerWindowing<A> {
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
-        if configure.new_size.0 == 0 || configure.new_size.1 == 0 {
-            self.width = 256;
-            self.height = 256;
+        let width = if configure.new_size.0 == 0 {
+            self.default_size.map(|(w, _)| w).unwrap_or(256)
         } else {
-            self.width = configure.new_size.0;
-            self.height = configure.new_size.1;
-        }
+            configure.new_size.0
+        };
+        let height = if configure.new_size.1 == 0 {
+            self.default_size.map(|(_, h)| h).unwrap_or(256)
+        } else {
+            configure.new_size.1
+        };
+
+        self.update_size(width, height);
 
         // Initiate the first draw.
         if self.first_configure {
@@ -477,6 +477,7 @@ impl<A> KeyboardHandler for LayerWindowing<A> {
         _: &[u32],
         keysyms: &[Keysym], // TODO
     ) {
+        log::trace!("keyboard enter");
         self.focused = true;
         self.events.push(egui::Event::WindowFocused(true));
     }
@@ -489,6 +490,8 @@ impl<A> KeyboardHandler for LayerWindowing<A> {
         _surface: &protocol::wl_surface::WlSurface,
         _: u32,
     ) {
+        log::trace!("keyboard leave");
+
         self.focused = false;
         self.events.push(egui::Event::WindowFocused(false));
     }
@@ -501,6 +504,8 @@ impl<A> KeyboardHandler for LayerWindowing<A> {
         _: u32,
         event: KeyEvent,
     ) {
+        log::trace!("key press {:?}", event);
+
         let key = keysym_to_key(event.keysym);
         if let Some(t) = event.utf8 {
             if !(t.is_empty() || t.chars().all(|c| c.is_ascii_control())) {
