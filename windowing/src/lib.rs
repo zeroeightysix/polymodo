@@ -4,7 +4,7 @@ mod convert;
 
 use derive_more::with_trait::From;
 use derive_more::{Display, Error};
-use egui::{Color32, Context, Key, MouseWheelUnit, PointerButton, Rect};
+use egui::{Color32, Context, MouseWheelUnit, Rect};
 use egui_wgpu::{RenderState, ScreenDescriptor, WgpuConfiguration, WgpuError, WgpuSetup};
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
@@ -53,7 +53,7 @@ pub enum LayerWindowingError {
     SurfaceError(wgpu::SurfaceError),
     CreateSurfaceError(wgpu::CreateSurfaceError),
     WgpuError(WgpuError),
-    WaylandError(wayland_backend::client::WaylandError),
+    #[allow(unused_qualifications)]WaylandError(wayland_backend::client::WaylandError),
     DispatchError(sctk::reexports::client::DispatchError),
     IoError(std::io::Error),
 }
