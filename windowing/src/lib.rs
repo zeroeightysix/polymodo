@@ -581,10 +581,7 @@ impl<A> PointerHandler for LayerWindowing<A> {
                 Press { button, .. } => {
                     self.events.push(egui::Event::PointerButton {
                         pos,
-                        button: match button {
-                            0 => PointerButton::Primary,
-                            _ => PointerButton::Secondary, // TODO
-                        },
+                        button: pointer_button_to_egui(button),
                         pressed: true,
                         modifiers: self.modifiers,
                     });
@@ -592,10 +589,7 @@ impl<A> PointerHandler for LayerWindowing<A> {
                 Release { button, .. } => {
                     self.events.push(egui::Event::PointerButton {
                         pos,
-                        button: match button {
-                            0 => PointerButton::Primary,
-                            _ => PointerButton::Secondary, // TODO
-                        },
+                        button: pointer_button_to_egui(button),
                         pressed: false,
                         modifiers: self.modifiers,
                     });
@@ -740,10 +734,26 @@ fn keysym_to_key(sym: Keysym) -> Option<Key> {
         Keysym::F33 => Some(Key::F33),
         Keysym::F34 => Some(Key::F34),
         Keysym::F35 => Some(Key::F35),
-        Keysym::Shift_L | Keysym::Shift_R | Keysym::Control_L | Keysym::Control_R => None,
+        Keysym::Shift_L
+        | Keysym::Shift_R
+        | Keysym::Control_L
+        | Keysym::Control_R
+        | Keysym::Super_L
+        | Keysym::Super_R => None,
         _ => {
             eprintln!("dont get it: {sym:?}; {:?}", sym.name());
             None
         }
+    }
+}
+
+fn pointer_button_to_egui(button: u32) -> PointerButton {
+    match button {
+        sctk::seat::pointer::BTN_LEFT => PointerButton::Primary,
+        sctk::seat::pointer::BTN_RIGHT => PointerButton::Secondary,
+        sctk::seat::pointer::BTN_MIDDLE => PointerButton::Middle,
+        sctk::seat::pointer::BTN_BACK => PointerButton::Extra1,
+        sctk::seat::pointer::BTN_FORWARD => PointerButton::Extra2,
+        _ => PointerButton::Primary,
     }
 }
