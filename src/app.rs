@@ -148,5 +148,10 @@ impl windowing::app::App for App {
             .show(ctx, |ui| {
                 self.app_launcher_ui(ui);
             });
+
+        // Kill when escape is pressed
+        if ctx.input(|i| i.key_pressed(Key::Escape)) {
+            std::process::exit(0);
+        }
     }
 }
