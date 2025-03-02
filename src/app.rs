@@ -3,7 +3,7 @@ use tokio::select;
 use tokio::sync::mpsc;
 use windowing::client::Client;
 use windowing::egui;
-use windowing::egui::{Frame, ScrollArea, TextStyle, Ui};
+use windowing::egui::{Frame, Key, ScrollArea, TextStyle, Ui};
 use windowing::sctk::shell::wlr_layer::Anchor;
 use windowing::LayerShellOptions;
 
@@ -44,6 +44,7 @@ enum Message {
 
 struct App {
     search_input: String,
+    focus_search: bool,
     nucleo: nucleo::Nucleo<&'static DesktopEntry>,
     // desktop_entries: Vec<&'static DesktopEntry>,
     show_entries: Vec<&'static DesktopEntry>,
@@ -83,6 +84,7 @@ impl App {
         App {
             tx,
             search_input: String::new(),
+            focus_search: true,
             nucleo,
             // desktop_entries,
             show_entries: Vec::new(),
@@ -116,25 +118,35 @@ impl App {
     }
 
     fn app_launcher_ui(&mut self, ui: &mut Ui) {
-        if ui.text_edit_singleline(&mut self.search_input).changed() {
+        let response = ui.text_edit_singleline(&mut self.search_input);
+        if std::mem::replace(&mut self.focus_search, false) {
+            response.request_focus();
+        }
+
+        if response.has_focus() {
+            if ui.input(|input| input.key_pressed(Key::ArrowDown)) {
+                // TODO
+            } else if ui.input(|input| input.key_pressed(Key::ArrowUp)) {
+                // TODO
+            }
+        }
+        if response.changed() {
             let _ = self.tx.try_send(Message::InputChanged);
         }
 
         let row_height = ui.text_style_height(&TextStyle::Monospace);
 
-        ScrollArea::vertical()
-            .auto_shrink(false)
-            .show_rows(
-                ui,
-                row_height,
-                self.show_entries.len(),
-                |ui, rows| {
-                    for row in rows {
-                        let entry = self.show_entries[row];
-                        ui.monospace(entry.name());
-                    }
+        ScrollArea::vertical().auto_shrink(false).show_rows(
+            ui,
+            row_height,
+            self.show_entries.len(),
+            |ui, rows| {
+                for row in rows {
+                    let entry = self.show_entries[row];
+                    ui.monospace(entry.name());
                 }
-            );
+            },
+        );
     }
 }
 
