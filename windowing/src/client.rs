@@ -21,7 +21,7 @@ impl<A: app::App + 'static> Client<A> {
         })
     }
 
-    pub async fn update(&mut self) -> Result<(), LayerWindowingError> {
+    pub async fn update(&mut self, repaint: bool) -> Result<(), LayerWindowingError> {
         let eq = &mut self.event_queue;
         let windowing = &mut self.layer_windowing;
         let dispatched = eq.dispatch_pending(windowing)?;
@@ -31,7 +31,7 @@ impl<A: app::App + 'static> Client<A> {
 
         eq.flush()?;
 
-        if !windowing.events.is_empty() || windowing.ctx.has_requested_repaint() {
+        if repaint || !windowing.events.is_empty() || windowing.ctx.has_requested_repaint() {
             windowing.render()?;
         }
 
