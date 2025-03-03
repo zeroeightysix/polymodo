@@ -3,7 +3,7 @@ use tokio::select;
 use tokio::sync::mpsc;
 use windowing::client::Client;
 use windowing::egui;
-use windowing::egui::{Frame, Key, ScrollArea, TextStyle, Ui};
+use windowing::egui::{Frame, Key, ScrollArea, TextEdit, TextStyle, Ui};
 use windowing::sctk::shell::wlr_layer::Anchor;
 use windowing::LayerShellOptions;
 
@@ -13,7 +13,7 @@ pub async fn run() -> anyhow::Result<()> {
     let mut window = Client::create(
         LayerShellOptions {
             anchor: Anchor::empty(),
-            width: 250,
+            width: 350,
             height: 400,
             ..Default::default()
         },
@@ -118,7 +118,10 @@ impl App {
     }
 
     fn app_launcher_ui(&mut self, ui: &mut Ui) {
-        let response = ui.text_edit_singleline(&mut self.search_input);
+        let response = TextEdit::singleline(&mut self.search_input)
+            .desired_width(f32::INFINITY)
+            .show(ui)
+            .response;
         if std::mem::replace(&mut self.focus_search, false) {
             response.request_focus();
         }
