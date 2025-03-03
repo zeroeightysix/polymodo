@@ -2,6 +2,7 @@
 
 mod app;
 mod xdg;
+mod fuzzy_search;
 
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;

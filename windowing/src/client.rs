@@ -51,7 +51,7 @@ impl<A: app::App + 'static> Client<A> {
 
         Ok(())
     }
-    
+
     pub fn app(&mut self) -> &mut A {
         &mut self.layer_windowing.app
     }

@@ -1,3 +1,4 @@
+use crate::fuzzy_search::{FuzzySearch, Row};
 use crate::xdg::DesktopEntry;
 use tokio::select;
 use tokio::sync::mpsc;
@@ -8,7 +9,17 @@ use windowing::sctk::shell::wlr_layer::Anchor;
 use windowing::LayerShellOptions;
 
 pub async fn run() -> anyhow::Result<()> {
-    let (send, mut recv) = tokio::sync::mpsc::channel(15);
+    let (send, mut recv) = mpsc::channel(15);
+
+    let app = App::create(send.clone());
+    let search_notify = app.search.notify();
+
+    tokio::spawn(async move {
+        loop {
+            search_notify.notified().await;
+            let _ = send.send(Message::Search).await;
+        }
+    });
 
     let mut window = Client::create(
         LayerShellOptions {
@@ -17,7 +28,7 @@ pub async fn run() -> anyhow::Result<()> {
             height: 400,
             ..Default::default()
         },
-        App::create(send),
+        app,
     )
     .await?;
 
@@ -38,81 +49,61 @@ pub async fn run() -> anyhow::Result<()> {
 
 #[derive(Debug, Clone)]
 enum Message {
-    InputChanged,
-    NucleoResult,
+    Search,
 }
 
 struct App {
     search_input: String,
     focus_search: bool,
-    nucleo: nucleo::Nucleo<&'static DesktopEntry>,
-    // desktop_entries: Vec<&'static DesktopEntry>,
-    show_entries: Vec<&'static DesktopEntry>,
+    search: FuzzySearch<1, SearchRow>,
+    show_entries: Vec<SearchRow>,
     tx: mpsc::Sender<Message>,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct SearchRow(&'static DesktopEntry);
+
+impl Row<1> for SearchRow {
+    type Output = &'static str;
+
+    fn columns(&self) -> [Self::Output; 1] {
+        [self.name()]
+    }
+}
+
+impl SearchRow {
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
 }
 
 impl App {
     fn create(tx: mpsc::Sender<Message>) -> Self {
-        let desktop_entries: Vec<&'static DesktopEntry> = crate::xdg::find_desktop_entries()
+        let desktop_entries: Vec<_> = crate::xdg::find_desktop_entries()
             .into_iter()
-            .map(|v| &*Box::leak(Box::new(v)))
+            .map(|v| SearchRow(&*Box::leak(Box::new(v))))
             .collect();
 
         let mut config = nucleo::Config::DEFAULT;
         config.prefer_prefix = true;
-        let nucleo = {
-            let tx = tx.clone();
-            nucleo::Nucleo::new(
-                config,
-                std::sync::Arc::new(move || {
-                    let _ = tx.try_send(Message::NucleoResult);
-                }),
-                None,
-                1,
-            )
-        };
-        let injector = nucleo.injector();
-        for de in &desktop_entries {
-            injector.push(
-                *de,
-                |de: &&'static DesktopEntry, col: &mut [nucleo::Utf32String]| {
-                    col[0] = de.name().into()
-                },
-            );
-        }
+        let search = FuzzySearch::create_with_config(config);
+        search.push_all(desktop_entries);
 
         App {
             tx,
             search_input: String::new(),
             focus_search: true,
-            nucleo,
             // desktop_entries,
+            search,
             show_entries: Vec::new(),
         }
     }
 
     fn on_message(&mut self, message: Message) {
         match message {
-            Message::InputChanged => {
-                self.nucleo.pattern.reparse(
-                    0,
-                    self.search_input.as_str(),
-                    nucleo::pattern::CaseMatching::Smart,
-                    nucleo::pattern::Normalization::Never,
-                    false,
-                ); // TODO: append
-                let status = self.nucleo.tick(0);
-                if !status.running && status.changed {
-                    // somehow, the worker finished immediately,
-                    // so send a NucleoResult to process its change.
-                    // normally, this never happens!
-                    let _ = self.tx.try_send(Message::NucleoResult);
-                }
-            }
-            Message::NucleoResult => {
-                self.nucleo.tick(10);
-                let snapshot = self.nucleo.snapshot();
-                self.show_entries = snapshot.matched_items(..).map(|i| *i.data).collect();
+            Message::Search => {
+                self.search.tick();
+                self.show_entries = self.search.get_matches().into_iter().copied().collect();
             }
         }
     }
@@ -133,8 +124,10 @@ impl App {
                 // TODO
             }
         }
+        // if the text input has changed,
         if response.changed() {
-            let _ = self.tx.try_send(Message::InputChanged);
+            // make a new search.
+            self.search.search::<0>(self.search_input.as_str());
         }
 
         let row_height = ui.text_style_height(&TextStyle::Monospace);
