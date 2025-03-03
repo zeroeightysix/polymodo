@@ -56,6 +56,8 @@ impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
             nucleo::pattern::Normalization::Never,
             append,
         );
+        // update the internal query
+        self.query = query;
         // update the matcher
         let status = self.tick();
         if !status.running && status.changed {
@@ -64,7 +66,7 @@ impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
             self.notify.notify_one();
         }
     }
-    
+
     /// Collects the matches from the matching engine
     pub fn get_matches(&self) -> Vec<&D> {
         let snapshot = self.nucleo.snapshot();
@@ -110,7 +112,7 @@ where
             col.swap_with_slice(&mut strings);
         });
     }
-    
+
     /// Add a bunch of entries to the matcher.
     pub fn push_all(&self, iter: impl IntoIterator<Item=D>) {
         iter.into_iter().for_each(|i| self.push(i))
