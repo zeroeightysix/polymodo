@@ -1,6 +1,9 @@
-use crate::{app, WindowingError};
+use crate::convert;
+use crate::{app, sctk, WindowingError};
 use egui::{Context, Rect};
 use egui_wgpu::{RenderState, ScreenDescriptor, WgpuConfiguration};
+use sctk::seat::pointer::PointerEvent;
+use smithay_client_toolkit::seat::pointer::PointerEventKind::*;
 use smithay_client_toolkit::shell::wlr_layer::{Anchor, Layer, LayerSurface};
 
 #[derive(Debug, Clone)]
@@ -51,9 +54,24 @@ impl Surface {
         );
     }
 
-    pub(crate) fn update_size(&mut self, width: u32, height: u32) {
+    pub(crate) fn update_size(&mut self, mut width: u32, mut height: u32) {
+        if width == 0 {
+            width = self.default_size.map(|(w, _)| w).unwrap_or(256);
+        }
+        if height == 0 {
+            height = self.default_size.map(|(w, _)| height).unwrap_or(256);
+        }
+        
         self.size = (width, height);
         self.configure_surface();
+    }
+    
+    pub(crate) fn first_draw<A: app::App>(&mut self, x: &mut A) where  {
+        if self.first_configure {
+            self.first_configure = false;
+            let render_result = self.render(x);
+            log::trace!("(first configure) render result {:?}", render_result);
+        }
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -150,6 +168,52 @@ impl Surface {
         output_frame.present();
 
         Ok(())
+    }
+
+    pub(crate) fn handle_pointer_event(&mut self, event: &PointerEvent) {
+        let pos = (event.position.0 as f32, event.position.1 as f32).into();
+        match event.kind {
+            Enter { .. } => {
+                self.events.push(egui::Event::PointerMoved(pos));
+            }
+            Leave { .. } => self.events.push(egui::Event::PointerGone),
+            Motion { .. } => {
+                self.events.push(egui::Event::PointerMoved(pos));
+            }
+            Press { button, .. } => {
+                self.events.push(egui::Event::PointerButton {
+                    pos,
+                    button: convert::pointer_button_to_egui(button),
+                    pressed: true,
+                    modifiers: self.modifiers,
+                });
+            }
+            Release { button, .. } => {
+                self.events.push(egui::Event::PointerButton {
+                    pos,
+                    button: convert::pointer_button_to_egui(button),
+                    pressed: false,
+                    modifiers: self.modifiers,
+                });
+            }
+            Axis {
+                horizontal,
+                vertical,
+                ..
+            } => self.events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: (horizontal.absolute as f32, -vertical.absolute as f32).into(),
+                modifiers: self.modifiers,
+            }),
+        }
+    }
+    
+    pub(crate) fn set_modifiers(&mut self, modifiers: egui::Modifiers) {
+        self.modifiers = modifiers;
+    }
+    
+    pub(crate) fn set_exit(&mut self) {
+        self.exit = true;
     }
 }
 

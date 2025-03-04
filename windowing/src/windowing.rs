@@ -269,7 +269,7 @@ impl<A: app::App> LayerShellHandler for Windowing<A> {
             return;
         };
 
-        surface.exit = true;
+        surface.set_exit();
     }
 
     fn configure(
@@ -292,25 +292,11 @@ impl<A: app::App> LayerShellHandler for Windowing<A> {
             surface.first_configure
         );
 
-        let width = if configure.new_size.0 == 0 {
-            surface.default_size.map(|(w, _)| w).unwrap_or(256)
-        } else {
-            configure.new_size.0
-        };
-        let height = if configure.new_size.1 == 0 {
-            surface.default_size.map(|(_, h)| h).unwrap_or(256)
-        } else {
-            configure.new_size.1
-        };
-
+        let (width, height) = configure.new_size;
         surface.update_size(width, height);
 
-        // Initiate the first draw.
-        if surface.first_configure {
-            surface.first_configure = false;
-            let render_result = surface.render(&mut self.app);
-            log::trace!("(first configure) render result {:?}", render_result);
-        }
+        // Initiate the first draw, if applicable.
+        surface.first_draw(&mut self.app);
     }
 }
 
@@ -505,13 +491,13 @@ impl<A> KeyboardHandler for Windowing<A> {
         };
 
         log::trace!("keyboard modifiers {:?}", modifiers);
-        surface.modifiers = egui::Modifiers {
+        surface.set_modifiers(egui::Modifiers {
             alt: modifiers.alt,
             ctrl: modifiers.ctrl,
             shift: modifiers.shift,
             mac_cmd: false,
             command: false,
-        }
+        });
     }
 }
 
@@ -523,8 +509,6 @@ impl<A> PointerHandler for Windowing<A> {
         _pointer: &protocol::wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
-        use egui::MouseWheelUnit;
-        use smithay_client_toolkit::seat::pointer::PointerEventKind::*;
         for event in events {
             let wl_surface = &event.surface;
             let Some(surface) = self.surfaces.get_mut(wl_surface) else {
@@ -533,43 +517,13 @@ impl<A> PointerHandler for Windowing<A> {
                 return;
             };
 
-            let pos = (event.position.0 as f32, event.position.1 as f32).into();
-            match event.kind {
-                Enter { .. } => {
-                    surface.events.push(egui::Event::PointerMoved(pos));
-                }
-                Leave { .. } => surface.events.push(egui::Event::PointerGone),
-                Motion { .. } => {
-                    surface.events.push(egui::Event::PointerMoved(pos));
-                }
-                Press { button, .. } => {
-                    surface.events.push(egui::Event::PointerButton {
-                        pos,
-                        button: convert::pointer_button_to_egui(button),
-                        pressed: true,
-                        modifiers: surface.modifiers,
-                    });
-                }
-                Release { button, .. } => {
-                    surface.events.push(egui::Event::PointerButton {
-                        pos,
-                        button: convert::pointer_button_to_egui(button),
-                        pressed: false,
-                        modifiers: surface.modifiers,
-                    });
-                }
-                Axis {
-                    horizontal,
-                    vertical,
-                    ..
-                } => surface.events.push(egui::Event::MouseWheel {
-                    unit: MouseWheelUnit::Point,
-                    delta: (horizontal.absolute as f32, -vertical.absolute as f32).into(),
-                    modifiers: surface.modifiers,
-                }),
-            }
+            surface.handle_pointer_event(event);
         }
     }
+}
+
+impl<A> Windowing<A> {
+    
 }
 
 impl<A: 'static + app::App> ProvidesRegistryState for Windowing<A> {
