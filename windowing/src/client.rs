@@ -1,19 +1,17 @@
-use wayland_backend::client::WaylandError;
-use std::io::ErrorKind;
+use crate::{app, Windowing, WindowingError};
+use smithay_client_toolkit::reexports::client::protocol::wl_surface;
 use smithay_client_toolkit::reexports::client::EventQueue;
-use crate::{app, LayerShellOptions, Windowing, WindowingError};
+use std::io::ErrorKind;
+use wayland_backend::client::WaylandError;
 
 pub struct Client<A> {
     event_queue: EventQueue<Windowing<A>>,
-    layer_windowing: Windowing<A>,
+    pub layer_windowing: Windowing<A>,
 }
 
 impl<A: app::App + 'static> Client<A> {
-    pub async fn create(
-        options: LayerShellOptions<'_>,
-        app: A
-    ) -> Result<Self, WindowingError> {
-        let (event_queue, layer_windowing) = Windowing::create(options, app).await?;
+    pub async fn create(wgpu_setup: egui_wgpu::WgpuSetup, app: A) -> Result<Self, WindowingError> {
+        let (event_queue, layer_windowing) = Windowing::create(wgpu_setup, app).await?;
 
         Ok(Self {
             event_queue,
@@ -21,7 +19,11 @@ impl<A: app::App + 'static> Client<A> {
         })
     }
 
-    pub async fn update(&mut self, repaint: bool) -> Result<(), WindowingError> {
+    pub async fn update(
+        &mut self,
+        surface: &wl_surface::WlSurface,
+        repaint: bool,
+    ) -> Result<(), WindowingError> {
         let eq = &mut self.event_queue;
         let windowing = &mut self.layer_windowing;
         let dispatched = eq.dispatch_pending(windowing)?;
@@ -31,9 +33,7 @@ impl<A: app::App + 'static> Client<A> {
 
         eq.flush()?;
 
-        if repaint || !windowing.events.is_empty() || windowing.ctx.has_requested_repaint() {
-            windowing.render()?;
-        }
+        windowing.render(surface, repaint)?;
 
         if let Some(events) = eq.prepare_read() {
             let fd = events.connection_fd().try_clone_to_owned()?;

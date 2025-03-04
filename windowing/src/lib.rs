@@ -30,11 +30,11 @@ use std::ptr::NonNull;
 use wgpu::rwh::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle};
 
 pub use egui;
+use egui::ahash::HashMap;
 pub use smithay_client_toolkit as sctk;
 
 #[derive(Debug, Clone)]
 pub struct LayerShellOptions<'a> {
-    pub wgpu_setup: WgpuSetup,
     pub wgpu_options: WgpuConfiguration,
     pub layer: Layer,
     pub namespace: Option<&'a str>,
@@ -53,52 +53,57 @@ pub enum WindowingError {
     SurfaceError(wgpu::SurfaceError),
     CreateSurfaceError(wgpu::CreateSurfaceError),
     WgpuError(WgpuError),
-    #[allow(unused_qualifications)]WaylandError(wayland_backend::client::WaylandError),
+    #[allow(unused_qualifications)]
+    WaylandError(wayland_backend::client::WaylandError),
     DispatchError(sctk::reexports::client::DispatchError),
     IoError(std::io::Error),
+    NoSuchSurface,
 }
 
 pub struct Windowing<A> {
+    connection: Connection,
+    compositor: CompositorState,
+    layer_shell: LayerShell,
     registry_state: RegistryState,
     seat_state: SeatState,
     output_state: OutputState,
+    qh: QueueHandle<Self>,
 
+    instance: wgpu::Instance,
+
+    keyboard: Option<protocol::wl_keyboard::WlKeyboard>,
+    keyboard_entered_surface: Option<protocol::wl_surface::WlSurface>,
+    pointer: Option<protocol::wl_pointer::WlPointer>,
+    start_time: std::time::Instant,
+
+    surfaces: HashMap<protocol::wl_surface::WlSurface, Surface>,
+
+    pub app: A,
+}
+
+pub struct Surface {
     exit: bool,
     first_configure: bool,
     default_size: Option<(u32, u32)>,
     size: (u32, u32),
     layer: LayerSurface,
     focused: bool,
-    keyboard: Option<protocol::wl_keyboard::WlKeyboard>,
-    pointer: Option<protocol::wl_pointer::WlPointer>,
+
     pub events: Vec<egui::Event>,
+    pub ctx: Context,
+    modifiers: egui::Modifiers,
     start_time: std::time::Instant,
 
-    modifiers: egui::Modifiers,
+    wpgu_surface: wgpu::Surface<'static>,
     render_state: RenderState,
-    surface: wgpu::Surface<'static>,
-    pub ctx: Context,
-    pub app: A,
 }
 
-impl<A> Windowing<A> {
+impl<A: app::App + 'static> Windowing<A> {
     pub async fn create(
-        LayerShellOptions {
-            wgpu_setup,
-            wgpu_options,
-            layer,
-            namespace,
-            anchor,
-            width,
-            height,
-        }: LayerShellOptions<'_>,
+        wgpu_setup: WgpuSetup,
         app: A,
-    ) -> Result<(EventQueue<Self>, Self), WindowingError>
-    where
-        A: 'static + app::App,
-    {
-        let connection =
-            Connection::connect_to_env().map_err(|_| WindowingError::NotWayland)?;
+    ) -> Result<(EventQueue<Self>, Self), WindowingError> {
+        let connection = Connection::connect_to_env().map_err(|_| WindowingError::NotWayland)?;
         let (globals, event_queue) = globals::registry_queue_init(&connection)?;
         let qh: QueueHandle<Windowing<A>> = event_queue.handle();
 
@@ -106,68 +111,130 @@ impl<A> Windowing<A> {
         let layer_shell =
             LayerShell::bind(&globals, &qh).map_err(|_| WindowingError::NoLayerShell)?;
 
-        let surface = compositor.create_surface(&qh);
-        let surf_id = surface.id();
-        let layer = layer_shell.create_layer_surface(&qh, surface, layer, namespace, None);
+        // create the wgpu instance from provided setup config
+        let instance = wgpu_setup.new_instance().await;
 
+        let state = Windowing {
+            connection,
+            compositor,
+            layer_shell,
+            registry_state: RegistryState::new(&globals),
+            seat_state: SeatState::new(&globals, &qh),
+            output_state: OutputState::new(&globals, &qh),
+            qh,
+            instance,
+            keyboard: None,
+            keyboard_entered_surface: None,
+            pointer: None,
+
+            start_time: std::time::Instant::now(),
+            surfaces: Default::default(),
+            app,
+        };
+
+        Ok((event_queue, state))
+    }
+
+    pub async fn create_surface(
+        &mut self,
+        LayerShellOptions {
+            wgpu_options,
+            layer,
+            namespace,
+            anchor,
+            width,
+            height,
+        }: LayerShellOptions<'_>,
+    ) -> Result<protocol::wl_surface::WlSurface, WindowingError> {
+        let Self { qh, instance, .. } = &self;
+
+        // create a new wayland surface and assign the layer_shell role
+        let wl_surface = self.compositor.create_surface(qh);
+        let wl_surf_id = wl_surface.id();
+        let layer = self
+            .layer_shell
+            .create_layer_surface(qh, wl_surface, layer, namespace, None);
+
+        // set up layer_shell options as provided
         layer.set_anchor(anchor);
         layer.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
         layer.set_size(width, height);
         layer.commit();
 
-        let instance = wgpu_setup.new_instance().await;
-
-        let surface = unsafe {
+        // create the wgpu surface (handle to all graphics related stuff on this wayland surface)
+        // SAFETY: the raw window handles constructed are always created by us, and we know that
+        // they're pointers to the correct types
+        let gpu_surface = unsafe {
             instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
                 raw_display_handle: RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
-                    NonNull::new(connection.backend().display_ptr() as *mut std::ffi::c_void)
+                    NonNull::new(self.connection.backend().display_ptr() as *mut std::ffi::c_void)
                         .unwrap(),
                 )),
                 raw_window_handle: RawWindowHandle::Wayland(WaylandWindowHandle::new(
-                    NonNull::new(surf_id.as_ptr() as *mut std::ffi::c_void).unwrap(),
+                    NonNull::new(wl_surf_id.as_ptr() as *mut std::ffi::c_void).unwrap(),
                 )),
             })?
         };
+        // set up the egui render state
         let render_state =
-            RenderState::create(&wgpu_options, &instance, Some(&surface), None, 1, true).await?;
+            RenderState::create(&wgpu_options, instance, Some(&gpu_surface), None, 1, true).await?;
 
+        // set up the egui context
         let ctx: Context = Default::default();
         ctx.set_theme(egui::Theme::Light);
         ctx.all_styles_mut(|sty| {
             sty.visuals.panel_fill = Color32::TRANSPARENT;
         });
 
-        let state = Windowing {
-            registry_state: RegistryState::new(&globals),
-            seat_state: SeatState::new(&globals, &qh),
-            output_state: OutputState::new(&globals, &qh),
+        let new_surface = Surface {
             exit: false,
             first_configure: true,
             default_size: Some((width, height)),
             size: (width, height),
             layer,
             focused: false,
-            keyboard: None,
-            pointer: None,
-
             events: vec![],
-            start_time: std::time::Instant::now(),
-            modifiers: Default::default(),
             ctx,
+            modifiers: Default::default(),
+            start_time: self.start_time,
+            wpgu_surface: gpu_surface,
             render_state,
-            surface,
-            app,
         };
 
-        state.configure_surface();
+        // set up the surface for rendering given the default size
+        // new_surface.configure_surface();
 
-        Ok((event_queue, state))
+        // finally, insert it into our internal store of surfaces
+        let wl_surface = new_surface.layer.wl_surface().clone();
+        self.surfaces.insert(wl_surface.clone(), new_surface);
+
+        Ok(wl_surface)
     }
 
+    // TODO: not very pretty
+    pub fn render(
+        &mut self,
+        surface: &protocol::wl_surface::WlSurface,
+        repaint: bool,
+    ) -> Result<(), WindowingError> {
+        let Some(surface) = self.surfaces.get_mut(surface) else {
+            return Err(WindowingError::NoSuchSurface);
+        };
+
+        if repaint || !surface.events.is_empty() || surface.ctx.has_requested_repaint() {
+            surface.render(&mut self.app)?;
+        }
+        Ok(())
+    }
+}
+
+impl Surface {
     fn configure_surface(&self) {
         let format = self.render_state.target_format;
         let (width, height) = self.size;
-        self.surface.configure(
+        log::trace!("configure wgpu surface");
+
+        self.wpgu_surface.configure(
             &self.render_state.device,
             &wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -194,11 +261,12 @@ impl<A> Windowing<A> {
     pub fn focused(&self) -> bool {
         self.focused
     }
-}
 
-impl<A: app::App> Windowing<A> {
-    pub fn render(&mut self) -> Result<(), WindowingError> {
-        let output_frame = self.surface.get_current_texture()?;
+    pub fn render<A>(&mut self, app: &mut A) -> Result<(), WindowingError>
+    where
+        A: app::App,
+    {
+        let output_frame = self.wpgu_surface.get_current_texture()?;
         let output_view = output_frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -237,7 +305,7 @@ impl<A: app::App> Windowing<A> {
             ..Default::default()
         };
         let output = self.ctx.run(raw_input, |ctx| {
-            self.app.update(ctx);
+            app.update(ctx);
         });
         // TODO: output.platform_output
         let prims = self.ctx.tessellate(output.shapes, output.pixels_per_point);
@@ -286,7 +354,6 @@ impl<A: app::App> Windowing<A> {
 impl Default for LayerShellOptions<'_> {
     fn default() -> Self {
         Self {
-            wgpu_setup: Default::default(),
             wgpu_options: Default::default(),
             layer: Layer::Top,
             namespace: None,
@@ -322,10 +389,18 @@ impl<A: app::App> CompositorHandler for Windowing<A> {
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _surface: &protocol::wl_surface::WlSurface,
+        surface: &protocol::wl_surface::WlSurface,
         _time: u32,
     ) {
-        let _ = self.render();
+        log::trace!("frame");
+
+        let Some(surface) = self.surfaces.get_mut(surface) else {
+            log::error!("frame event for unknown surface");
+            return;
+        };
+
+        let render_result = surface.render(&mut self.app);
+        log::trace!("render result {:?}", render_result);
     }
 
     fn surface_enter(
@@ -378,35 +453,53 @@ impl<A> OutputHandler for Windowing<A> {
 }
 
 impl<A: app::App> LayerShellHandler for Windowing<A> {
-    fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {
-        self.exit = true;
+    fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, layer: &LayerSurface) {
+        let Some(surface) = self.surfaces.get_mut(layer.wl_surface()) else {
+            log::error!("closed event for unknown surface");
+            return;
+        };
+
+        surface.exit = true;
     }
 
     fn configure(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _layer: &LayerSurface,
+        layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
+        let Some(surface) = self.surfaces.get_mut(layer.wl_surface()) else {
+            log::error!("configure event for unknown surface");
+
+            return;
+        };
+
+        log::trace!(
+            "configure {:?} (first: {})",
+            configure,
+            surface.first_configure
+        );
+
         let width = if configure.new_size.0 == 0 {
-            self.default_size.map(|(w, _)| w).unwrap_or(256)
+            surface.default_size.map(|(w, _)| w).unwrap_or(256)
         } else {
             configure.new_size.0
         };
         let height = if configure.new_size.1 == 0 {
-            self.default_size.map(|(_, h)| h).unwrap_or(256)
+            surface.default_size.map(|(_, h)| h).unwrap_or(256)
         } else {
             configure.new_size.1
         };
 
-        self.update_size(width, height);
+        surface.update_size(width, height);
 
         // Initiate the first draw.
-        if self.first_configure {
-            self.first_configure = false;
-            let _ = self.render();
+        if surface.first_configure {
+            surface.first_configure = false;
+            let render_result = surface.render(&mut self.app);
+            log::trace!("(first configure) render result {:?}", render_result);
         }
     }
 }
@@ -472,14 +565,21 @@ impl<A> KeyboardHandler for Windowing<A> {
         _: &Connection,
         _: &QueueHandle<Self>,
         _: &protocol::wl_keyboard::WlKeyboard,
-        _surface: &protocol::wl_surface::WlSurface,
+        wl_surface: &protocol::wl_surface::WlSurface,
         _: u32,
         _: &[u32],
         _keysyms: &[Keysym],
     ) {
+        let Some(surface) = self.surfaces.get_mut(wl_surface) else {
+            log::error!("enter event for unknown surface");
+
+            return;
+        };
+        self.keyboard_entered_surface = Some(wl_surface.clone());
+
         log::trace!("keyboard enter");
-        self.focused = true;
-        self.events.push(egui::Event::WindowFocused(true));
+        surface.focused = true;
+        surface.events.push(egui::Event::WindowFocused(true));
     }
 
     fn leave(
@@ -487,13 +587,24 @@ impl<A> KeyboardHandler for Windowing<A> {
         _: &Connection,
         _: &QueueHandle<Self>,
         _: &protocol::wl_keyboard::WlKeyboard,
-        _surface: &protocol::wl_surface::WlSurface,
+        wl_surface: &protocol::wl_surface::WlSurface,
         _: u32,
     ) {
         log::trace!("keyboard leave");
 
-        self.focused = false;
-        self.events.push(egui::Event::WindowFocused(false));
+        let Some(surface) = self.surfaces.get_mut(wl_surface) else {
+            log::error!("leave event for unknown surface");
+
+            return;
+        };
+        if let Some(previous_focused) = self.keyboard_entered_surface.take() {
+            if previous_focused != *wl_surface {
+                log::warn!("previous focused surface did not match up with the one we just left");
+            }
+        }
+
+        surface.focused = false;
+        surface.events.push(egui::Event::WindowFocused(false));
     }
 
     fn press_key(
@@ -504,20 +615,30 @@ impl<A> KeyboardHandler for Windowing<A> {
         _: u32,
         event: KeyEvent,
     ) {
+        let Some(wl_surface) = &self.keyboard_entered_surface else {
+            log::warn!("key press without a focused surface");
+            return;
+        };
+        let Some(surface) = self.surfaces.get_mut(wl_surface) else {
+            log::error!("key press event for unknown surface");
+
+            return;
+        };
+
         log::trace!("key press {:?}", event);
 
         let key = convert::keysym_to_key(event.keysym);
         if let Some(t) = event.utf8 {
             if !(t.is_empty() || t.chars().all(|c| c.is_ascii_control())) {
-                self.events.push(egui::Event::Text(t));
+                surface.events.push(egui::Event::Text(t));
             }
         }
         if let Some(key) = key {
-            self.events.push(egui::Event::Key {
+            surface.events.push(egui::Event::Key {
                 key,
                 physical_key: None,
                 pressed: true,
-                modifiers: self.modifiers,
+                modifiers: surface.modifiers,
                 repeat: false,
             })
         }
@@ -531,13 +652,23 @@ impl<A> KeyboardHandler for Windowing<A> {
         _: u32,
         event: KeyEvent,
     ) {
+        let Some(wl_surface) = &self.keyboard_entered_surface else {
+            log::warn!("key release without a focused surface");
+            return;
+        };
+        let Some(surface) = self.surfaces.get_mut(wl_surface) else {
+            log::error!("key release event for unknown surface");
+
+            return;
+        };
+
         let key = convert::keysym_to_key(event.keysym);
         if let Some(key) = key {
-            self.events.push(egui::Event::Key {
+            surface.events.push(egui::Event::Key {
                 key,
                 physical_key: None,
                 pressed: false,
-                modifiers: self.modifiers,
+                modifiers: surface.modifiers,
                 repeat: false,
             })
         }
@@ -553,8 +684,18 @@ impl<A> KeyboardHandler for Windowing<A> {
         modifiers: Modifiers,
         _layout: u32,
     ) {
+        let Some(wl_surface) = &self.keyboard_entered_surface else {
+            log::warn!("modifiers without a focused surface");
+            return;
+        };
+        let Some(surface) = self.surfaces.get_mut(wl_surface) else {
+            log::error!("modifiers event for unknown surface");
+
+            return;
+        };
+
         log::trace!("keyboard modifiers {:?}", modifiers);
-        self.modifiers = egui::Modifiers {
+        surface.modifiers = egui::Modifiers {
             alt: modifiers.alt,
             ctrl: modifiers.ctrl,
             shift: modifiers.shift,
@@ -572,47 +713,48 @@ impl<A> PointerHandler for Windowing<A> {
         _pointer: &protocol::wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
-        log::trace!("pointer_frame {events:?}");
-
         use PointerEventKind::*;
         for event in events {
-            // Ignore events for other surfaces
-            if &event.surface != self.layer.wl_surface() {
-                continue;
-            }
+            let wl_surface = &event.surface;
+            let Some(surface) = self.surfaces.get_mut(wl_surface) else {
+                log::error!("pointer event for unknown surface");
+
+                return;
+            };
+
             let pos = (event.position.0 as f32, event.position.1 as f32).into();
             match event.kind {
                 Enter { .. } => {
-                    self.events.push(egui::Event::PointerMoved(pos));
+                    surface.events.push(egui::Event::PointerMoved(pos));
                 }
-                Leave { .. } => self.events.push(egui::Event::PointerGone),
+                Leave { .. } => surface.events.push(egui::Event::PointerGone),
                 Motion { .. } => {
-                    self.events.push(egui::Event::PointerMoved(pos));
+                    surface.events.push(egui::Event::PointerMoved(pos));
                 }
                 Press { button, .. } => {
-                    self.events.push(egui::Event::PointerButton {
+                    surface.events.push(egui::Event::PointerButton {
                         pos,
                         button: convert::pointer_button_to_egui(button),
                         pressed: true,
-                        modifiers: self.modifiers,
+                        modifiers: surface.modifiers,
                     });
                 }
                 Release { button, .. } => {
-                    self.events.push(egui::Event::PointerButton {
+                    surface.events.push(egui::Event::PointerButton {
                         pos,
                         button: convert::pointer_button_to_egui(button),
                         pressed: false,
-                        modifiers: self.modifiers,
+                        modifiers: surface.modifiers,
                     });
                 }
                 Axis {
                     horizontal,
                     vertical,
                     ..
-                } => self.events.push(egui::Event::MouseWheel {
+                } => surface.events.push(egui::Event::MouseWheel {
                     unit: MouseWheelUnit::Point,
                     delta: (horizontal.absolute as f32, -vertical.absolute as f32).into(),
-                    modifiers: self.modifiers,
+                    modifiers: surface.modifiers,
                 }),
             }
         }

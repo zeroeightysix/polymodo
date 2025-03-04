@@ -70,7 +70,8 @@ impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
     /// Collects the matches from the matching engine
     pub fn get_matches(&self) -> Vec<&D> {
         let snapshot = self.nucleo.snapshot();
-        let matched = snapshot.matched_items(..)
+        let matched = snapshot
+            .matched_items(..)
             .map(|i| i.data) // TODO
             .collect::<Vec<_>>();
 
@@ -100,22 +101,23 @@ where
 {
     /// Add an entry to the matcher.
     pub fn push(&self, entry: D) {
-        self.injector.push(entry, |entry: &D, col: &mut [nucleo::Utf32String]| {
-            // for this entry, get the column values from its Row implementation
-            let strings = entry.columns();
-            // turn them into nucleo::Utf32String
-            // (Into impl comes from trait bound on D)
-            // --
-            // technically we already have the heap-allocations of Utf32String in `col` at this point,
-            // so it coooouuulld be more efficient to fill & grow those instead,
-            // but who cares?
-            let mut strings = strings.map(|output| output.into());
-            col.swap_with_slice(&mut strings);
-        });
+        self.injector
+            .push(entry, |entry: &D, col: &mut [nucleo::Utf32String]| {
+                // for this entry, get the column values from its Row implementation
+                let strings = entry.columns();
+                // turn them into nucleo::Utf32String
+                // (Into impl comes from trait bound on D)
+                // --
+                // technically we already have the heap-allocations of Utf32String in `col` at this point,
+                // so it coooouuulld be more efficient to fill & grow those instead,
+                // but who cares?
+                let mut strings = strings.map(|output| output.into());
+                col.swap_with_slice(&mut strings);
+            });
     }
 
     /// Add a bunch of entries to the matcher.
-    pub fn push_all(&self, iter: impl IntoIterator<Item=D>) {
+    pub fn push_all(&self, iter: impl IntoIterator<Item = D>) {
         iter.into_iter().for_each(|i| self.push(i))
     }
 }

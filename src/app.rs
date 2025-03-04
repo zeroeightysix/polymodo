@@ -1,8 +1,8 @@
+use crate::fuzzy_search::{FuzzySearch, Row};
+use crate::xdg::DesktopEntry;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
-use crate::fuzzy_search::{FuzzySearch, Row};
-use crate::xdg::DesktopEntry;
 use tokio::select;
 use tokio::sync::mpsc;
 use windowing::client::Client;
@@ -24,26 +24,29 @@ pub async fn run() -> anyhow::Result<()> {
         }
     });
 
-    let mut window = Client::create(
-        LayerShellOptions {
-            anchor: Anchor::empty(),
-            width: 350,
-            height: 400,
-            ..Default::default()
-        },
-        app,
-    )
-    .await?;
+    let options = LayerShellOptions {
+        anchor: Anchor::empty(),
+        width: 350,
+        height: 400,
+        ..Default::default()
+    };
+
+    log::trace!("connect to wayland");
+    let mut client = Client::create(Default::default(), app).await?;
+    log::trace!("create surface");
+    let surf = client.layer_windowing.create_surface(options).await?;
+
+    log::trace!("enter event loop");
 
     let mut repaint = false;
     loop {
         select! {
-            result = window.update(repaint) => {
+            result = client.update(&surf, repaint) => {
                 let () = result?;
                 repaint = false;
             }
             Some(message) = recv.recv() => {
-                window.app().on_message(message);
+                client.app().on_message(message);
                 repaint = true;
             }
         }
@@ -157,11 +160,9 @@ impl App {
                         let mut args = exec.split(" ").collect::<Vec<_>>();
                         // the first "argument" is the program to launch
                         let program = args.remove(0);
-                        
-                        let error = Command::new(program)
-                            .args(args)
-                            .exec(); // this will never return if the exec succeeds
-                        
+
+                        let error = Command::new(program).args(args).exec(); // this will never return if the exec succeeds
+
                         // but if it did return, log the error and return:
                         log::error!("failed to launch: {}", error);
                         let _ = std::io::stdout().flush();

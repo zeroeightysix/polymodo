@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-smithay-client-toolkit = "0.19.2"
+smithay-client-toolkit = { version = "0.19.2", default-features = false, features = ["xkbcommon"] }
 wayland-backend = { version = "0.3", features = ["client_system", "dlopen"] }
 wgpu = "24.0.1"
 egui = "0.31.0"

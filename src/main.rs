@@ -1,9 +1,9 @@
 #![feature(let_chains)]
 
 mod app;
-mod xdg;
 mod fuzzy_search;
 mod mode;
+mod xdg;
 
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     log_panics::init();
 
     log::info!("polymodo starting");
-    
+
     app::run().await?;
 
     Ok(())

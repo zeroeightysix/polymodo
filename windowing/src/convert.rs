@@ -1,5 +1,5 @@
-use smithay_client_toolkit::seat::keyboard::Keysym;
 use egui::{Key, PointerButton};
+use smithay_client_toolkit::seat::keyboard::Keysym;
 
 use crate::sctk;
 
