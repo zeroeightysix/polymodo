@@ -1,3 +1,6 @@
+use std::io::Write;
+use std::os::unix::process::CommandExt;
+use std::process::Command;
 use crate::fuzzy_search::{FuzzySearch, Row};
 use crate::xdg::DesktopEntry;
 use tokio::select;
@@ -58,10 +61,11 @@ struct App {
     search: FuzzySearch<1, SearchRow>,
     show_entries: Vec<SearchRow>,
     tx: mpsc::Sender<Message>,
+    selected_entry_idx: usize,
 }
 
 #[derive(Copy, Clone, Debug)]
-struct SearchRow(&'static DesktopEntry);
+struct SearchRow(pub &'static DesktopEntry);
 
 impl Row<1> for SearchRow {
     type Output = &'static str;
@@ -96,6 +100,7 @@ impl App {
             // desktop_entries,
             search,
             show_entries: Vec::new(),
+            selected_entry_idx: 0,
         }
     }
 
@@ -118,20 +123,65 @@ impl App {
         }
 
         if response.has_focus() {
+            // if up/down has been pressed, adjust the selected entry
             if ui.input(|input| input.key_pressed(Key::ArrowDown)) {
-                // TODO
+                self.selected_entry_idx = (self.selected_entry_idx + 1) % self.show_entries.len();
             } else if ui.input(|input| input.key_pressed(Key::ArrowUp)) {
-                // TODO
+                self.selected_entry_idx =
+                    (self.selected_entry_idx.saturating_sub(1)) % self.show_entries.len();
             }
         }
         // if the text input has changed,
         if response.changed() {
             // make a new search.
             self.search.search::<0>(self.search_input.as_str());
+            // and reset the selection
+            // TODO: perhaps if in the new search result, the selected item persist,
+            // adjust the selection to "follow" it.
+            self.selected_entry_idx = 0;
+        }
+        // if enter was pressed (within the textedit)
+        if response.lost_focus()
+            && ui.input(|i| i.key_pressed(Key::Enter))
+            && !self.show_entries.is_empty()
+        {
+            let entry = self.show_entries.get(self.selected_entry_idx);
+            if let Some(exec) = entry.and_then(|e| e.0.exec.as_ref()) {
+                match fork::fork() {
+                    Ok(fork::Fork::Child) => {
+                        // detach
+                        fork::setsid().unwrap();
+
+                        // TODO: Exec key is a lot more complex than this!
+                        // split exec by spaces
+                        let mut args = exec.split(" ").collect::<Vec<_>>();
+                        // the first "argument" is the program to launch
+                        let program = args.remove(0);
+                        
+                        let error = Command::new(program)
+                            .args(args)
+                            .exec(); // this will never return if the exec succeeds
+                        
+                        // but if it did return, log the error and return:
+                        log::error!("failed to launch: {}", error);
+                        let _ = std::io::stdout().flush();
+                        std::process::exit(-1);
+                    }
+                    Ok(fork::Fork::Parent(pid)) => {
+                        log::info!("Launched {:?} with pid {pid}", entry.map(|e| e.name()));
+                        let _ = std::io::stdout().flush();
+                        std::process::exit(0);
+                    }
+                    Err(e) => {
+                        log::error!("Fork failed: {}", e);
+                        let _ = std::io::stdout().flush();
+                        std::process::exit(-1);
+                    }
+                }
+            }
         }
 
         let row_height = ui.text_style_height(&TextStyle::Monospace);
-
         ScrollArea::vertical().auto_shrink(false).show_rows(
             ui,
             row_height,
@@ -139,7 +189,12 @@ impl App {
             |ui, rows| {
                 for row in rows {
                     let entry = self.show_entries[row];
-                    ui.monospace(entry.name());
+                    if ui
+                        .selectable_label(self.selected_entry_idx == row, entry.name())
+                        .clicked()
+                    {
+                        self.selected_entry_idx = row;
+                    }
                 }
             },
         );

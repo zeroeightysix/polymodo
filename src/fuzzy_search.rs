@@ -87,6 +87,7 @@ impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
 
     /// Access the inner nucleo [nucleo::Injector]
     #[inline]
+    #[expect(unused)]
     pub fn injector(&self) -> &nucleo::Injector<D> {
         &self.injector
     }

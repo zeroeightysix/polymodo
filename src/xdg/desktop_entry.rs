@@ -5,16 +5,17 @@ use std::path::{Path, PathBuf};
 
 /// An XDG desktop entry.
 #[derive(Debug, Clone)]
+#[expect(unused)]
 pub struct DesktopEntry {
     /// The original path at which this desktop entry is located.
-    source_path: PathBuf,
+    pub source_path: PathBuf,
     /// The hash of the desktop entry's content
-    source_hash: u64,
-
-    entry_type: ApplicationType,
-    name: String,
-    generic_name: Option<String>,
-    comment: Option<String>,
+    pub source_hash: u64,
+    pub entry_type: ApplicationType,
+    pub name: String,
+    pub exec: Option<String>,
+    pub generic_name: Option<String>,
+    pub comment: Option<String>,
 }
 
 impl DesktopEntry {
@@ -24,7 +25,7 @@ impl DesktopEntry {
 }
 
 #[derive(Copy, Clone, Debug, strum::EnumString)]
-enum ApplicationType {
+pub enum ApplicationType {
     Application,
     Link,
     Directory,
@@ -55,12 +56,14 @@ pub fn load(path: impl AsRef<Path>) -> anyhow::Result<DesktopEntry> {
         .context("desktop entry does not have a Name section")?;
     let generic_name = main_section.get("GenericName");
     let comment = main_section.get("Comment");
+    let exec = main_section.get("Exec");
 
     Ok(DesktopEntry {
         source_path: path.to_path_buf(),
         source_hash: hash,
         entry_type,
         name: name.to_string(),
+        exec: exec.map(|s| s.to_string()),
         generic_name: generic_name.map(|s| s.to_string()),
         comment: comment.map(|s| s.to_string()),
     })

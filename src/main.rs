@@ -22,6 +22,8 @@ async fn main() -> anyhow::Result<()> {
 
     log_panics::init();
 
+    log::info!("polymodo starting");
+    
     app::run().await?;
 
     Ok(())
