@@ -59,7 +59,7 @@ impl Surface {
             width = self.default_size.map(|(w, _)| w).unwrap_or(256);
         }
         if height == 0 {
-            height = self.default_size.map(|(w, _)| height).unwrap_or(256);
+            height = self.default_size.map(|(_, h)| h).unwrap_or(256);
         }
         
         self.size = (width, height);
