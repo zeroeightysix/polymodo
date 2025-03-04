@@ -1,4 +1,5 @@
-use crate::{app, Windowing, WindowingError};
+use crate::windowing::Windowing;
+use crate::{app, WindowingError};
 use smithay_client_toolkit::reexports::client::protocol::wl_surface;
 use smithay_client_toolkit::reexports::client::EventQueue;
 use std::io::ErrorKind;

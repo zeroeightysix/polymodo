@@ -9,7 +9,7 @@ use windowing::client::Client;
 use windowing::egui;
 use windowing::egui::{Frame, Key, ScrollArea, TextEdit, TextStyle, Ui};
 use windowing::sctk::shell::wlr_layer::Anchor;
-use windowing::LayerShellOptions;
+use windowing::surface::LayerShellOptions;
 
 pub async fn run() -> anyhow::Result<()> {
     let (send, mut recv) = mpsc::channel(15);
