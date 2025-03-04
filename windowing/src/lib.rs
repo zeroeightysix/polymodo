@@ -44,7 +44,7 @@ pub struct LayerShellOptions<'a> {
 }
 
 #[derive(Debug, Display, Error, From)]
-pub enum LayerWindowingError {
+pub enum WindowingError {
     NotWayland,
     GlobalError(GlobalError),
     NoLayerShell,
@@ -58,7 +58,7 @@ pub enum LayerWindowingError {
     IoError(std::io::Error),
 }
 
-pub struct LayerWindowing<A> {
+pub struct Windowing<A> {
     registry_state: RegistryState,
     seat_state: SeatState,
     output_state: OutputState,
@@ -81,7 +81,7 @@ pub struct LayerWindowing<A> {
     pub app: A,
 }
 
-impl<A> LayerWindowing<A> {
+impl<A> Windowing<A> {
     pub async fn create(
         LayerShellOptions {
             wgpu_setup,
@@ -93,18 +93,18 @@ impl<A> LayerWindowing<A> {
             height,
         }: LayerShellOptions<'_>,
         app: A,
-    ) -> Result<(EventQueue<Self>, Self), LayerWindowingError>
+    ) -> Result<(EventQueue<Self>, Self), WindowingError>
     where
         A: 'static + app::App,
     {
         let connection =
-            Connection::connect_to_env().map_err(|_| LayerWindowingError::NotWayland)?;
+            Connection::connect_to_env().map_err(|_| WindowingError::NotWayland)?;
         let (globals, event_queue) = globals::registry_queue_init(&connection)?;
-        let qh: QueueHandle<LayerWindowing<A>> = event_queue.handle();
+        let qh: QueueHandle<Windowing<A>> = event_queue.handle();
 
         let compositor = CompositorState::bind(&globals, &qh).unwrap();
         let layer_shell =
-            LayerShell::bind(&globals, &qh).map_err(|_| LayerWindowingError::NoLayerShell)?;
+            LayerShell::bind(&globals, &qh).map_err(|_| WindowingError::NoLayerShell)?;
 
         let surface = compositor.create_surface(&qh);
         let surf_id = surface.id();
@@ -137,7 +137,7 @@ impl<A> LayerWindowing<A> {
             sty.visuals.panel_fill = Color32::TRANSPARENT;
         });
 
-        let state = LayerWindowing {
+        let state = Windowing {
             registry_state: RegistryState::new(&globals),
             seat_state: SeatState::new(&globals, &qh),
             output_state: OutputState::new(&globals, &qh),
@@ -196,8 +196,8 @@ impl<A> LayerWindowing<A> {
     }
 }
 
-impl<A: app::App> LayerWindowing<A> {
-    pub fn render(&mut self) -> Result<(), LayerWindowingError> {
+impl<A: app::App> Windowing<A> {
+    pub fn render(&mut self) -> Result<(), WindowingError> {
         let output_frame = self.surface.get_current_texture()?;
         let output_view = output_frame
             .texture
@@ -297,7 +297,7 @@ impl Default for LayerShellOptions<'_> {
     }
 }
 
-impl<A: app::App> CompositorHandler for LayerWindowing<A> {
+impl<A: app::App> CompositorHandler for Windowing<A> {
     fn scale_factor_changed(
         &mut self,
         _conn: &Connection,
@@ -347,7 +347,7 @@ impl<A: app::App> CompositorHandler for LayerWindowing<A> {
     }
 }
 
-impl<A> OutputHandler for LayerWindowing<A> {
+impl<A> OutputHandler for Windowing<A> {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.output_state
     }
@@ -377,7 +377,7 @@ impl<A> OutputHandler for LayerWindowing<A> {
     }
 }
 
-impl<A: app::App> LayerShellHandler for LayerWindowing<A> {
+impl<A: app::App> LayerShellHandler for Windowing<A> {
     fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {
         self.exit = true;
     }
@@ -411,7 +411,7 @@ impl<A: app::App> LayerShellHandler for LayerWindowing<A> {
     }
 }
 
-impl<A: 'static> SeatHandler for LayerWindowing<A> {
+impl<A: 'static> SeatHandler for Windowing<A> {
     fn seat_state(&mut self) -> &mut SeatState {
         &mut self.seat_state
     }
@@ -466,7 +466,7 @@ impl<A: 'static> SeatHandler for LayerWindowing<A> {
     }
 }
 
-impl<A> KeyboardHandler for LayerWindowing<A> {
+impl<A> KeyboardHandler for Windowing<A> {
     fn enter(
         &mut self,
         _: &Connection,
@@ -564,7 +564,7 @@ impl<A> KeyboardHandler for LayerWindowing<A> {
     }
 }
 
-impl<A> PointerHandler for LayerWindowing<A> {
+impl<A> PointerHandler for Windowing<A> {
     fn pointer_frame(
         &mut self,
         _conn: &Connection,
@@ -619,7 +619,7 @@ impl<A> PointerHandler for LayerWindowing<A> {
     }
 }
 
-impl<A: 'static + app::App> ProvidesRegistryState for LayerWindowing<A> {
+impl<A: 'static + app::App> ProvidesRegistryState for Windowing<A> {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.registry_state
     }
@@ -627,13 +627,13 @@ impl<A: 'static + app::App> ProvidesRegistryState for LayerWindowing<A> {
     registry_handlers![@<A> OutputState, SeatState];
 }
 
-delegate_compositor!(@<A: (app::App) + 'static> LayerWindowing<A>);
-delegate_output!(@<A: 'static> LayerWindowing<A>);
+delegate_compositor!(@<A: (app::App) + 'static> Windowing<A>);
+delegate_output!(@<A: 'static> Windowing<A>);
 
-delegate_seat!(@<A: (app::App) + 'static> LayerWindowing<A>);
-delegate_keyboard!(@<A: 'static> LayerWindowing<A>);
-delegate_pointer!(@<A> LayerWindowing<A>);
+delegate_seat!(@<A: (app::App) + 'static> Windowing<A>);
+delegate_keyboard!(@<A: 'static> Windowing<A>);
+delegate_pointer!(@<A> Windowing<A>);
 
-delegate_layer!(@<A: (app::App) + 'static> LayerWindowing<A>);
+delegate_layer!(@<A: (app::App) + 'static> Windowing<A>);
 
-delegate_registry!(@<A: (app::App) + 'static> LayerWindowing<A>);
+delegate_registry!(@<A: (app::App) + 'static> Windowing<A>);

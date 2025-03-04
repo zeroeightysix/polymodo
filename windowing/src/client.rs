@@ -1,19 +1,19 @@
 use wayland_backend::client::WaylandError;
 use std::io::ErrorKind;
 use smithay_client_toolkit::reexports::client::EventQueue;
-use crate::{app, LayerShellOptions, LayerWindowing, LayerWindowingError};
+use crate::{app, LayerShellOptions, Windowing, WindowingError};
 
 pub struct Client<A> {
-    event_queue: EventQueue<LayerWindowing<A>>,
-    layer_windowing: LayerWindowing<A>,
+    event_queue: EventQueue<Windowing<A>>,
+    layer_windowing: Windowing<A>,
 }
 
 impl<A: app::App + 'static> Client<A> {
     pub async fn create(
         options: LayerShellOptions<'_>,
         app: A
-    ) -> Result<Self, LayerWindowingError> {
-        let (event_queue, layer_windowing) = LayerWindowing::create(options, app).await?;
+    ) -> Result<Self, WindowingError> {
+        let (event_queue, layer_windowing) = Windowing::create(options, app).await?;
 
         Ok(Self {
             event_queue,
@@ -21,7 +21,7 @@ impl<A: app::App + 'static> Client<A> {
         })
     }
 
-    pub async fn update(&mut self, repaint: bool) -> Result<(), LayerWindowingError> {
+    pub async fn update(&mut self, repaint: bool) -> Result<(), WindowingError> {
         let eq = &mut self.event_queue;
         let windowing = &mut self.layer_windowing;
         let dispatched = eq.dispatch_pending(windowing)?;
