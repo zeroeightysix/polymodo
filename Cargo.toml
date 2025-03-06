@@ -16,6 +16,7 @@ nucleo = "0.5.0"
 windowing = { path = "windowing" }
 log = "0.4.22"
 fork = "0.2.0"
+slotmap = "1.0.7"
 
 [workspace]
 members = ["windowing"]

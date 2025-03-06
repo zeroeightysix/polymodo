@@ -1,6 +1,7 @@
 #![feature(let_chains)]
 
-mod app;
+mod polymodo;
+mod config;
 mod fuzzy_search;
 mod mode;
 mod xdg;
@@ -25,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
 
     log::info!("polymodo starting");
 
-    app::run().await?;
+    polymodo::run().await?;
 
     Ok(())
 }

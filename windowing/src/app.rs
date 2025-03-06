@@ -1,3 +1,4 @@
 pub trait App {
-    fn update(&mut self, ctx: &egui::Context);
+    fn render(&mut self, ctx: &egui::Context);
 }
+

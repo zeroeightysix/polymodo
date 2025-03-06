@@ -973,6 +973,7 @@ dependencies = [
  "log-panics",
  "nucleo",
  "rust-ini",
+ "slotmap",
  "strum",
  "tokio",
  "tracing",

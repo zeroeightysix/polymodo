@@ -1,32 +1,32 @@
-use crate::windowing::Windowing;
-use crate::{app, WindowingError};
-use smithay_client_toolkit::reexports::client::protocol::wl_surface;
+use crate::surface::{FullSurfaceId, LayerSurfaceOptions, SurfaceId};
+use crate::windowing::{DispatcherRequest, Windowing};
+use crate::WindowingError;
+use egui::ViewportId;
 use smithay_client_toolkit::reexports::client::EventQueue;
 use std::io::ErrorKind;
+use tokio::sync::mpsc;
 use wayland_backend::client::WaylandError;
 
-pub struct Client<A> {
-    event_queue: EventQueue<Windowing<A>>,
-    pub layer_windowing: Windowing<A>,
+pub struct Client {
+    event_queue: EventQueue<Windowing>,
+    sender: mpsc::Sender<crate::windowing::DispatcherRequest>,
+    pub windowing: Windowing,
 }
 
-impl<A: app::App + 'static> Client<A> {
-    pub async fn create(wgpu_setup: egui_wgpu::WgpuSetup, app: A) -> Result<Self, WindowingError> {
-        let (event_queue, layer_windowing) = Windowing::create(wgpu_setup, app).await?;
+impl Client {
+    pub async fn create(wgpu_setup: egui_wgpu::WgpuSetup, sender: mpsc::Sender<crate::windowing::DispatcherRequest>) -> Result<Self, WindowingError> {
+        let (event_queue, windowing) = Windowing::create(wgpu_setup, sender.clone()).await?;
 
         Ok(Self {
             event_queue,
-            layer_windowing,
+            sender,
+            windowing,
         })
     }
 
-    pub async fn update(
-        &mut self,
-        surface: &wl_surface::WlSurface,
-        repaint: bool,
-    ) -> Result<(), WindowingError> {
+    pub async fn update(&mut self) -> Result<(), WindowingError> {
         let eq = &mut self.event_queue;
-        let windowing = &mut self.layer_windowing;
+        let windowing = &mut self.windowing;
         let dispatched = eq.dispatch_pending(windowing)?;
         if dispatched > 0 {
             return Ok(());
@@ -34,7 +34,12 @@ impl<A: app::App + 'static> Client<A> {
 
         eq.flush()?;
 
-        windowing.render(surface, repaint)?;
+        self.windowing.surfaces()
+            .filter(|surf| surf.has_events())
+            .map(|surf| surf.surface_id())
+            .for_each(|id| {
+                let _ = self.sender.try_send(DispatcherRequest::RepaintSurface(id));
+            });
 
         if let Some(events) = eq.prepare_read() {
             let fd = events.connection_fd().try_clone_to_owned()?;
@@ -53,7 +58,15 @@ impl<A: app::App + 'static> Client<A> {
         Ok(())
     }
 
-    pub fn app(&mut self) -> &mut A {
-        &mut self.layer_windowing.app
+    pub fn repaint_surface(&mut self, surface_id: SurfaceId, ctx: &egui::Context, render_ui: impl FnMut(&egui::Context)) {
+        self.windowing.repaint_surface(surface_id, ctx, render_ui);
+    }
+
+    pub async fn create_surface(
+        &mut self,
+        viewport_id: ViewportId,
+        options: LayerSurfaceOptions<'_>,
+    ) -> Result<FullSurfaceId, WindowingError> {
+        self.windowing.create_surface(viewport_id, options).await
     }
 }
