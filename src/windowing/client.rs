@@ -1,6 +1,7 @@
-use crate::surface::{FullSurfaceId, LayerSurfaceOptions, SurfaceId};
-use crate::windowing::{DispatcherRequest, Windowing};
-use crate::WindowingError;
+use crate::windowing::surface::{FullSurfaceId, LayerSurfaceOptions, SurfaceId};
+use crate::windowing::windowing::DispatcherRequest;
+use crate::windowing::windowing::Windowing;
+use crate::windowing::WindowingError;
 use egui::ViewportId;
 use smithay_client_toolkit::reexports::client::EventQueue;
 use std::io::ErrorKind;
@@ -9,12 +10,15 @@ use wayland_backend::client::WaylandError;
 
 pub struct Client {
     event_queue: EventQueue<Windowing>,
-    sender: mpsc::Sender<crate::windowing::DispatcherRequest>,
+    sender: mpsc::Sender<DispatcherRequest>,
     pub windowing: Windowing,
 }
 
 impl Client {
-    pub async fn create(wgpu_setup: egui_wgpu::WgpuSetup, sender: mpsc::Sender<crate::windowing::DispatcherRequest>) -> Result<Self, WindowingError> {
+    pub async fn create(
+        wgpu_setup: egui_wgpu::WgpuSetup,
+        sender: mpsc::Sender<DispatcherRequest>,
+    ) -> Result<Self, WindowingError> {
         let (event_queue, windowing) = Windowing::create(wgpu_setup, sender.clone()).await?;
 
         Ok(Self {
@@ -34,7 +38,8 @@ impl Client {
 
         eq.flush()?;
 
-        self.windowing.surfaces()
+        self.windowing
+            .surfaces()
             .filter(|surf| surf.has_events())
             .map(|surf| surf.surface_id())
             .for_each(|id| {
@@ -58,7 +63,12 @@ impl Client {
         Ok(())
     }
 
-    pub fn repaint_surface(&mut self, surface_id: SurfaceId, ctx: &egui::Context, render_ui: impl FnMut(&egui::Context)) {
+    pub fn repaint_surface(
+        &mut self,
+        surface_id: SurfaceId,
+        ctx: &egui::Context,
+        render_ui: impl FnMut(&egui::Context),
+    ) {
         self.windowing.repaint_surface(surface_id, ctx, render_ui);
     }
 

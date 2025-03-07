@@ -1,12 +1,11 @@
-use crate::convert;
-use crate::{sctk, WindowingError};
+use crate::windowing::{convert, WindowingError};
 use egui::{Context, Rect, ViewportId};
 use egui_wgpu::{RenderState, ScreenDescriptor, WgpuConfiguration};
-use sctk::seat::pointer::PointerEvent;
 use smithay_client_toolkit::reexports::client::{protocol, Proxy};
+use smithay_client_toolkit::seat::pointer::PointerEvent;
 use smithay_client_toolkit::seat::pointer::PointerEventKind::*;
-use smithay_client_toolkit::shell::WaylandSurface;
 use smithay_client_toolkit::shell::wlr_layer::{Anchor, Layer, LayerSurface};
+use smithay_client_toolkit::shell::WaylandSurface;
 use wayland_backend::client::ObjectId;
 
 #[derive(Debug, Clone)]
@@ -231,11 +230,11 @@ impl Surface {
             }),
         }
     }
-    
+
     pub(crate) fn has_events(&self) -> bool {
         !self.events.is_empty()
     }
-    
+
     pub(crate) fn surface_id(&self) -> SurfaceId {
         self.layer_surface.wl_surface().into()
     }

@@ -3,8 +3,7 @@ use crate::xdg::DesktopEntry;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
-use windowing::egui;
-use windowing::egui::{Frame, Key, ScrollArea, TextEdit, TextStyle, Ui};
+use crate::windowing::app::App;
 
 pub struct Launcher {
     search_input: String,
@@ -36,8 +35,8 @@ impl Launcher {
         }
     }
 
-    fn app_launcher_ui(&mut self, ui: &mut Ui) {
-        let response = TextEdit::singleline(&mut self.search_input)
+    fn app_launcher_ui(&mut self, ui: &mut egui::Ui) {
+        let response = egui::TextEdit::singleline(&mut self.search_input)
             .desired_width(f32::INFINITY)
             .show(ui)
             .response;
@@ -47,9 +46,9 @@ impl Launcher {
 
         if response.has_focus() {
             // if up/down has been pressed, adjust the selected entry
-            if ui.input(|input| input.key_pressed(Key::ArrowDown)) {
+            if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
                 self.selected_entry_idx = (self.selected_entry_idx + 1) % self.show_entries.len();
-            } else if ui.input(|input| input.key_pressed(Key::ArrowUp)) {
+            } else if ui.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
                 self.selected_entry_idx =
                     (self.selected_entry_idx.saturating_sub(1)) % self.show_entries.len();
             }
@@ -65,7 +64,7 @@ impl Launcher {
         }
         // if enter was pressed (within the textedit)
         if response.lost_focus()
-            && ui.input(|i| i.key_pressed(Key::Enter))
+            && ui.input(|i| i.key_pressed(egui::Key::Enter))
             && !self.show_entries.is_empty()
         {
             let entry = self.show_entries.get(self.selected_entry_idx);
@@ -102,8 +101,8 @@ impl Launcher {
             }
         }
 
-        let row_height = ui.text_style_height(&TextStyle::Monospace);
-        ScrollArea::vertical().auto_shrink(false).show_rows(
+        let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+        egui::ScrollArea::vertical().auto_shrink(false).show_rows(
             ui,
             row_height,
             self.show_entries.len(),
@@ -131,9 +130,9 @@ impl Launcher {
     }
 }
 
-impl windowing::app::App for Launcher {
+impl App for Launcher {
     fn render(&mut self, ctx: &egui::Context) {
-        let mut frame = Frame::window(&ctx.style());
+        let mut frame = egui::Frame::window(&ctx.style());
         frame.shadow.offset[1] = frame.shadow.offset[0];
 
         egui::CentralPanel::default()
@@ -143,7 +142,7 @@ impl windowing::app::App for Launcher {
             });
 
         // Kill when escape is pressed
-        if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             std::process::exit(0);
         }
     }

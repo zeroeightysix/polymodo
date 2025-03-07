@@ -1,7 +1,7 @@
 use egui::{Key, PointerButton};
 use smithay_client_toolkit::seat::keyboard::Keysym;
 
-use crate::sctk;
+use smithay_client_toolkit as sctk;
 
 pub fn keysym_to_key(sym: Keysym) -> Option<Key> {
     match sym {

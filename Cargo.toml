@@ -4,19 +4,28 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1.41.0", features = ["full"] }
+
+# Windowing
+tokio = { version = "1", default-features = false, features = ["full"] }
+
+smithay-client-toolkit = { version = "0.19.2", default-features = false, features = ["xkbcommon"] }
+wayland-backend = { version = "0.3", features = ["client_system", "dlopen"] }
+wgpu = "24.0.1"
+egui = "0.31.0"
+egui-wgpu = "0.31.0"
+
+log = "0.4"
+log-panics = "2.1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-anyhow = "1.0.95"
-log-panics = "2.1.0"
-rust-ini = "0.21.1"
-strum = { version = "0.26.3", features = ["derive"] }
-xdg = "2.5.2"
-nucleo = "0.5.0"
-windowing = { path = "windowing" }
-log = "0.4.22"
-fork = "0.2.0"
-slotmap = "1.0.7"
 
-[workspace]
-members = ["windowing"]
+slotmap = "1.0.7"
+anyhow = "1.0.95"
+derive_more = { version = "2.0.1", features = ["display", "error", "from"] }
+strum = { version = "0.26.3", features = ["derive"] }
+
+# Launcher
+xdg = "2.5.2"
+rust-ini = "0.21.1"
+nucleo = "0.5.0"
+fork = "0.2.0"

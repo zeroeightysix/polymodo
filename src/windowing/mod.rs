@@ -6,8 +6,8 @@ pub mod windowing;
 
 use derive_more::with_trait::From;
 use derive_more::{Display, Error};
-pub use egui;
-pub use smithay_client_toolkit as sctk;
+
+use smithay_client_toolkit as sctk;
 
 #[derive(Debug, Display, Error, From)]
 pub enum WindowingError {

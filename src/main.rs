@@ -1,9 +1,10 @@
 #![feature(let_chains)]
 
-mod polymodo;
 mod config;
 mod fuzzy_search;
 mod mode;
+mod polymodo;
+mod windowing;
 mod xdg;
 
 use tracing::metadata::LevelFilter;

@@ -1,18 +1,17 @@
+use crate::windowing::app::App;
+use crate::windowing::client::Client;
+use crate::windowing::surface::{FullSurfaceId, LayerSurfaceOptions, SurfaceId};
+use crate::windowing::windowing::DispatcherRequest;
 use slotmap::{new_key_type, SlotMap};
+use smithay_client_toolkit::shell;
 use tokio::select;
 use tokio::sync::mpsc;
-use windowing::app::App;
-use windowing::client::Client;
-use windowing::egui::{Context, ViewportId};
-use windowing::sctk::shell::wlr_layer::Anchor;
-use windowing::surface::{FullSurfaceId, LayerSurfaceOptions, SurfaceId};
-use windowing::windowing::DispatcherRequest;
 
 new_key_type! {
     struct AppKey;
 }
 
-type AppData = (Vec<FullSurfaceId>, Box<dyn App>, Context);
+type AppData = (Vec<FullSurfaceId>, Box<dyn App>, egui::Context);
 
 struct Polymodo {
     client: Client,
@@ -25,10 +24,10 @@ impl Polymodo {
         client: &mut Client,
         surfs: &mut Vec<FullSurfaceId>,
         app: &mut Box<dyn App>,
-        ctx: &mut Context,
+        ctx: &mut egui::Context,
     ) {
         for surf in surfs {
-            client.repaint_surface(surf.surface_id.clone(), ctx, |ctx: &Context| {
+            client.repaint_surface(surf.surface_id.clone(), ctx, |ctx: &egui::Context| {
                 app.render(ctx);
             });
         }
@@ -44,7 +43,7 @@ impl Polymodo {
         }
     }
 
-    fn repaint_view(&mut self, viewport_id: ViewportId) {
+    fn repaint_view(&mut self, viewport_id: egui::ViewportId) {
         if let Some((_, (surfs, app, ctx))) = self
             .apps
             .iter_mut()
@@ -60,9 +59,9 @@ impl Polymodo {
         }
     }
 
-    fn create_context(&self) -> Context {
+    fn create_context(&self) -> egui::Context {
         let sender = self.sender.clone();
-        let ctx = Context::default();
+        let ctx = egui::Context::default();
         ctx.set_request_repaint_callback(move |info| {
             // TODO: delay
             let _ = sender.try_send(DispatcherRequest::RepaintViewport(
@@ -118,7 +117,7 @@ pub async fn run() -> anyhow::Result<()> {
     // });
 
     let options = LayerSurfaceOptions {
-        anchor: Anchor::empty(),
+        anchor: shell::wlr_layer::Anchor::empty(),
         width: 350,
         height: 400,
         ..Default::default()
@@ -136,7 +135,7 @@ pub async fn run() -> anyhow::Result<()> {
     let launch = crate::mode::launch::Launcher::create();
     let surf = poly
         .client
-        .create_surface(ViewportId::ROOT, options)
+        .create_surface(egui::ViewportId::ROOT, options)
         .await?;
     poly.apps
         .insert((vec![surf], Box::new(launch), poly.create_context()));

@@ -1,5 +1,5 @@
-use crate::surface::{FullSurfaceId, LayerSurfaceOptions, Surface, SurfaceId};
-use crate::{convert, WindowingError};
+use crate::windowing::surface::{FullSurfaceId, LayerSurfaceOptions, Surface, SurfaceId};
+use crate::windowing::{convert, WindowingError};
 use egui::ahash::HashMap;
 use egui::ViewportId;
 use egui_wgpu::{RenderState, WgpuSetup};
@@ -41,11 +41,14 @@ pub struct Windowing {
     start_time: std::time::Instant,
 
     surfaces: HashMap<SurfaceId, Surface>,
-    dispatch_sender: mpsc::Sender<DispatcherRequest>
+    dispatch_sender: mpsc::Sender<DispatcherRequest>,
 }
 
 impl Windowing {
-    pub async fn create(wgpu_setup: WgpuSetup, sender: mpsc::Sender<DispatcherRequest>) -> Result<(EventQueue<Self>, Self), WindowingError> {
+    pub async fn create(
+        wgpu_setup: WgpuSetup,
+        sender: mpsc::Sender<DispatcherRequest>,
+    ) -> Result<(EventQueue<Self>, Self), WindowingError> {
         let connection = Connection::connect_to_env().map_err(|_| WindowingError::NotWayland)?;
         let (globals, event_queue) = globals::registry_queue_init(&connection)?;
         let qh: QueueHandle<Windowing> = event_queue.handle();
@@ -129,7 +132,7 @@ impl Windowing {
             surface_id: surface_id.clone(),
             viewport_id,
         };
-        
+
         let surface = Surface::create(
             full_id.clone(),
             (width, height),
@@ -148,7 +151,12 @@ impl Windowing {
         Ok(full_id)
     }
 
-    pub fn repaint_surface(&mut self, surface_id: SurfaceId, ctx: &egui::Context, render_ui: impl FnMut(&egui::Context)) {
+    pub fn repaint_surface(
+        &mut self,
+        surface_id: SurfaceId,
+        ctx: &egui::Context,
+        render_ui: impl FnMut(&egui::Context),
+    ) {
         self.with_surface_mut(surface_id, |surf| {
             match surf.render(ctx, render_ui) {
                 Ok(_) => {}
@@ -158,7 +166,7 @@ impl Windowing {
             };
         });
     }
-    
+
     pub(crate) fn surfaces(&self) -> impl Iterator<Item = &Surface> {
         self.surfaces.values()
     }
@@ -168,17 +176,22 @@ impl Windowing {
         id: SurfaceId,
         f: impl FnOnce(&mut Surface) -> R,
     ) -> Option<R> {
-        let surf = self.surfaces.get_mut(&id)?;//.and_then(|weak| weak.upgrade())?;
-        // let mut surf = surf.lock().unwrap();
+        let surf = self.surfaces.get_mut(&id)?; //.and_then(|weak| weak.upgrade())?;
+                                                // let mut surf = surf.lock().unwrap();
 
         Some(f(&mut *surf))
     }
-    
+
     fn ask_to_repaint(&self, surface: SurfaceId) {
-        match self.dispatch_sender.try_send(DispatcherRequest::RepaintSurface(surface)) {
+        match self
+            .dispatch_sender
+            .try_send(DispatcherRequest::RepaintSurface(surface))
+        {
             Ok(_) => {}
             Err(mpsc::error::TrySendError::Full(_)) => {
-                log::error!("could not repaint surface, as the buffer for asking to do so, is full!")
+                log::error!(
+                    "could not repaint surface, as the buffer for asking to do so, is full!"
+                )
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 log::error!("god has abandoned us");
@@ -304,25 +317,26 @@ impl LayerShellHandler for Windowing {
         _serial: u32,
     ) {
         let id: SurfaceId = layer.wl_surface().into();
-        let redraw = self.with_surface_mut(id.clone(), |surface| {
-            log::trace!(
-                "configure {:?} (first: {})",
-                configure,
+        let redraw = self
+            .with_surface_mut(id.clone(), |surface| {
+                log::trace!(
+                    "configure {:?} (first: {})",
+                    configure,
+                    surface.is_first_configure()
+                );
+
+                let (width, height) = configure.new_size;
+                surface.update_size(width, height);
+
+                // Initiate the first draw, if applicable.
+                // TODO: surface.first_draw(&mut self.app);
                 surface.is_first_configure()
-            );
+            })
+            .unwrap_or_else(|| {
+                log::error!("configure event for unknown surface");
+                false
+            });
 
-            let (width, height) = configure.new_size;
-            surface.update_size(width, height);
-
-            // Initiate the first draw, if applicable.
-            // TODO: surface.first_draw(&mut self.app);
-            surface.is_first_configure()
-        })
-        .unwrap_or_else(|| {
-            log::error!("configure event for unknown surface");
-            false
-        });
-        
         if redraw {
             self.ask_to_repaint(id);
         }
@@ -429,9 +443,9 @@ impl KeyboardHandler for Windowing {
         }
 
         self.with_surface_mut(wl_surface.into(), |surface| surface.on_focus(false))
-        .unwrap_or_else(|| {
-            log::error!("leave event for unknown surface");
-        });
+            .unwrap_or_else(|| {
+                log::error!("leave event for unknown surface");
+            });
     }
 
     fn press_key(
@@ -449,7 +463,7 @@ impl KeyboardHandler for Windowing {
 
         self.with_surface_mut(wl_surface.into(), |surface| {
             log::trace!("key press {:?}", event);
-            
+
             let key = convert::keysym_to_key(event.keysym);
             if let Some(t) = event.utf8 {
                 if !(t.is_empty() || t.chars().all(|c| c.is_ascii_control())) {
