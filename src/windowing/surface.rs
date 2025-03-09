@@ -7,6 +7,7 @@ use smithay_client_toolkit::seat::pointer::PointerEventKind::*;
 use smithay_client_toolkit::shell::wlr_layer::{Anchor, Layer, LayerSurface};
 use smithay_client_toolkit::shell::WaylandSurface;
 use wayland_backend::client::ObjectId;
+use crate::start_time;
 
 #[derive(Debug, Clone)]
 pub struct LayerSurfaceOptions<'a> {
@@ -18,8 +19,10 @@ pub struct LayerSurfaceOptions<'a> {
     pub height: u32,
 }
 
+/// An owned wayland layer surface, with all render state and events related to it.
 pub struct Surface {
-    full_id: FullSurfaceId,
+    // which egui viewport was this surface created for?
+    viewport_id: ViewportId,
     exit: bool,
     first_configure: bool,
     default_size: Option<(u32, u32)>,
@@ -29,41 +32,29 @@ pub struct Surface {
 
     events: Vec<egui::Event>,
     modifiers: egui::Modifiers,
-    start_time: std::time::Instant,
 
     wgpu_surface: wgpu::Surface<'static>,
     render_state: RenderState,
 }
 
 impl Surface {
-    // pub(crate) fn first_draw<A: app::App>(&mut self, app: &mut A) where  {
-    //     if self.first_configure {
-    //         self.first_configure = false;
-    //         let render_result = self.render(|ctx| {
-    //             app.render(ctx);
-    //         });
-    //         log::trace!("(first configure) render result {:?}", render_result);
-    //     }
-
     pub fn create(
-        full_id: FullSurfaceId,
+        viewport_id: ViewportId,
         size: (u32, u32),
         layer_surface: LayerSurface,
-        start_time: std::time::Instant,
         wgpu_surface: wgpu::Surface<'static>,
         render_state: RenderState,
     ) -> Self {
         Self {
-            full_id,
+            viewport_id,
             exit: false,
             first_configure: true,
             default_size: Some(size),
             size,
             layer_surface,
             focused: false,
-            events: vec![],
+            events: Default::default(),
             modifiers: Default::default(),
-            start_time,
             wgpu_surface,
             render_state,
         }
@@ -145,17 +136,18 @@ impl Surface {
     }
 
     fn next_raw_input(&mut self) -> egui::RawInput {
+        let size = self.size();
         let events = std::mem::take(&mut self.events);
 
         egui::RawInput {
-            viewport_id: self.full_id.viewport_id,
+            viewport_id: self.viewport_id,
             screen_rect: Some(Rect::from_min_size(
                 Default::default(),
-                (self.size.0 as f32, self.size.1 as f32).into(),
+                (size.0 as f32, size.1 as f32).into(),
             )),
-            modifiers: self.modifiers,
-            focused: self.focused,
-            time: Some((std::time::Instant::now() - self.start_time).as_secs_f64()),
+            modifiers: self.modifiers(),
+            focused: self.focused(),
+            time: Some((std::time::Instant::now() - start_time()).as_secs_f64()),
             events,
             ..Default::default()
         }
@@ -181,7 +173,7 @@ impl Surface {
         );
     }
 
-    pub(crate) fn update_size(&mut self, mut width: u32, mut height: u32) {
+    pub fn update_size(&mut self, mut width: u32, mut height: u32) {
         if width == 0 {
             width = self.default_size.map(|(w, _)| w).unwrap_or(256);
         }
@@ -193,18 +185,19 @@ impl Surface {
         self.configure_surface();
     }
 
-    pub(crate) fn handle_pointer_event(&mut self, event: &PointerEvent) {
+    pub fn handle_pointer_event(&mut self, event: &PointerEvent) {
         let pos = (event.position.0 as f32, event.position.1 as f32).into();
+        let events = &mut self.events;
         match event.kind {
             Enter { .. } => {
-                self.events.push(egui::Event::PointerMoved(pos));
+                events.push(egui::Event::PointerMoved(pos));
             }
-            Leave { .. } => self.events.push(egui::Event::PointerGone),
+            Leave { .. } => events.push(egui::Event::PointerGone),
             Motion { .. } => {
-                self.events.push(egui::Event::PointerMoved(pos));
+                events.push(egui::Event::PointerMoved(pos));
             }
             Press { button, .. } => {
-                self.events.push(egui::Event::PointerButton {
+                events.push(egui::Event::PointerButton {
                     pos,
                     button: convert::pointer_button_to_egui(button),
                     pressed: true,
@@ -212,7 +205,7 @@ impl Surface {
                 });
             }
             Release { button, .. } => {
-                self.events.push(egui::Event::PointerButton {
+                events.push(egui::Event::PointerButton {
                     pos,
                     button: convert::pointer_button_to_egui(button),
                     pressed: false,
@@ -223,7 +216,7 @@ impl Surface {
                 horizontal,
                 vertical,
                 ..
-            } => self.events.push(egui::Event::MouseWheel {
+            } => events.push(egui::Event::MouseWheel {
                 unit: egui::MouseWheelUnit::Point,
                 delta: (horizontal.absolute as f32, -vertical.absolute as f32).into(),
                 modifiers: self.modifiers,
@@ -231,55 +224,58 @@ impl Surface {
         }
     }
 
-    pub(crate) fn has_events(&self) -> bool {
+    pub fn has_events(&self) -> bool {
         !self.events.is_empty()
     }
 
-    pub(crate) fn surface_id(&self) -> SurfaceId {
+    pub fn surface_id(&self) -> SurfaceId {
         self.layer_surface.wl_surface().into()
     }
 
+    #[inline]
     pub fn size(&self) -> (u32, u32) {
         self.size
     }
 
+    #[inline]
     pub fn focused(&self) -> bool {
         self.focused
     }
 
-    pub(crate) fn modifiers(&self) -> egui::Modifiers {
+    #[inline]
+    pub fn modifiers(&self) -> egui::Modifiers {
         self.modifiers
     }
 
-    pub(crate) fn set_modifiers(&mut self, modifiers: egui::Modifiers) {
+    pub fn set_modifiers(&mut self, modifiers: egui::Modifiers) {
         self.modifiers = modifiers;
     }
 
-    pub(crate) fn set_exit(&mut self) {
+    pub fn set_exit(&mut self) {
         self.exit = true;
     }
 
-    pub(crate) fn is_first_configure(&self) -> bool {
+    pub fn is_first_configure(&self) -> bool {
         self.first_configure
     }
 
-    pub(crate) fn on_focus(&mut self, focus: bool) {
+    pub fn on_focus(&mut self, focus: bool) {
         self.focused = focus;
         self.push_event(egui::Event::WindowFocused(focus));
     }
 
-    pub(crate) fn on_key(&mut self, key: egui::Key, pressed: bool) {
+    pub fn on_key(&mut self, key: egui::Key, pressed: bool) {
         self.push_event(egui::Event::Key {
             key,
             physical_key: None,
             pressed,
-            modifiers: self.modifiers,
+            modifiers: self.modifiers(),
             repeat: false,
         });
     }
 
     #[inline]
-    pub(crate) fn push_event(&mut self, event: egui::Event) {
+    pub fn push_event(&mut self, event: egui::Event) {
         self.events.push(event);
     }
 }
@@ -310,10 +306,4 @@ impl From<ObjectId> for SurfaceId {
     fn from(value: ObjectId) -> Self {
         Self(value)
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct FullSurfaceId {
-    pub surface_id: SurfaceId,
-    pub viewport_id: ViewportId,
 }

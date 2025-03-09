@@ -1,9 +1,9 @@
 use crate::fuzzy_search::{FuzzySearch, Row};
+use crate::windowing::app::App;
 use crate::xdg::DesktopEntry;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
-use crate::windowing::app::App;
 
 pub struct Launcher {
     search_input: String,

@@ -1,8 +1,7 @@
 pub mod app;
-pub mod client;
 mod convert;
 pub mod surface;
-pub mod windowing;
+pub mod client;
 
 use derive_more::with_trait::From;
 use derive_more::{Display, Error};
@@ -14,7 +13,6 @@ pub enum WindowingError {
     NotWayland,
     GlobalError(sctk::reexports::client::globals::GlobalError),
     NoLayerShell,
-    NoAdapter,
     RequestDeviceError(wgpu::RequestDeviceError),
     SurfaceError(wgpu::SurfaceError),
     CreateSurfaceError(wgpu::CreateSurfaceError),
