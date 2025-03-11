@@ -246,6 +246,8 @@ impl SurfaceSetup {
             wgpu_surface,
             render_state,
         );
+        
+        surface.configure_surface();
 
         Ok(surface)
     }
