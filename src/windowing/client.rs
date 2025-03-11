@@ -420,6 +420,12 @@ impl KeyboardHandler for Dispatcher {
         _keysyms: &[Keysym],
     ) {
         self.push_event(SurfaceEvent::KeyboardFocus(wl_surface.into(), true));
+
+        if self.keyboard_entered_surface.is_some() {
+            log::warn!("keyboard enter event with an already entered keyboard surface");
+        }
+        
+        self.keyboard_entered_surface = Some(wl_surface.clone());
     }
 
     fn leave(
