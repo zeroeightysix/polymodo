@@ -121,38 +121,6 @@ impl Dispatcher {
         Ok(state)
     }
 
-    /// Dispatch wayland events and repaint surfaces with pending events.
-    // pub async fn dispatch(
-    //     &mut self,
-    //     event_queue: &mut EventQueue<Self>,
-    // ) -> Result<(), WindowingError> {
-    //     let dispatched = event_queue.dispatch_pending(self)?;
-    //
-    //     event_queue.flush()?;
-    //
-    //     self.push_event(SurfaceEvent::RepaintAll);
-    //
-    //     if dispatched > 0 {
-    //         return Ok(());
-    //     }
-    //
-    //     if let Some(events) = event_queue.prepare_read() {
-    //         let fd = events.connection_fd().try_clone_to_owned()?;
-    //         let async_fd = tokio::io::unix::AsyncFd::new(fd)?;
-    //         let mut ready_guard = async_fd.readable().await?;
-    //         match events.read() {
-    //             Ok(_) => {
-    //                 ready_guard.clear_ready();
-    //             }
-    //             Err(WaylandError::Io(e)) if e.kind() == ErrorKind::WouldBlock => {}
-    //             Err(e) => Err(e)?,
-    //         }
-    //         drop(ready_guard);
-    //     }
-    //
-    //     Ok(())
-    // }
-
     pub fn dispatch(&mut self, event_queue: &mut EventQueue<Self>) -> anyhow::Result<()> {
         event_queue.blocking_dispatch(self)?;
 
@@ -348,6 +316,8 @@ impl LayerShellHandler for Dispatcher {
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
+        log::trace!("configure {configure:?}");
+        
         self.push_event(SurfaceEvent::Configure(
             layer.wl_surface().into(),
             configure,
@@ -421,6 +391,8 @@ impl KeyboardHandler for Dispatcher {
         _: &[u32],
         _keysyms: &[Keysym],
     ) {
+        log::trace!("keyboard::enter on {wl_surface:?}");
+        
         self.push_event(SurfaceEvent::KeyboardFocus(wl_surface.into(), true));
 
         if self.keyboard_entered_surface.is_some() {
@@ -438,6 +410,8 @@ impl KeyboardHandler for Dispatcher {
         wl_surface: &protocol::wl_surface::WlSurface,
         _: u32,
     ) {
+        log::trace!("keyboard::leave on {wl_surface:?}");
+        
         self.push_event(SurfaceEvent::KeyboardFocus(wl_surface.into(), false));
 
         if let Some(previous_focused) = self.keyboard_entered_surface.take() {
@@ -455,6 +429,8 @@ impl KeyboardHandler for Dispatcher {
         _: u32,
         event: KeyEvent,
     ) {
+        log::trace!("keyboard::press: {event:?}");
+        
         let Some(wl_surface) = &self.keyboard_entered_surface else {
             log::warn!("key press without a focused surface");
             return;
@@ -482,6 +458,8 @@ impl KeyboardHandler for Dispatcher {
         _: u32,
         event: KeyEvent,
     ) {
+        log::trace!("keyboard::release: {event:?}");
+        
         let Some(wl_surface) = &self.keyboard_entered_surface else {
             log::warn!("key release without a focused surface");
             return;
@@ -502,6 +480,8 @@ impl KeyboardHandler for Dispatcher {
         modifiers: Modifiers,
         _layout: u32,
     ) {
+        log::trace!("keyboard::modifiers: {modifiers:?}");
+        
         let Some(wl_surface) = &self.keyboard_entered_surface else {
             return;
         };
