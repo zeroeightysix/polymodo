@@ -8,9 +8,7 @@ pub trait App: Sized {
     type Message;
     type Output;
 
-    fn create(
-        message_sender: AppSender<Self::Message>,
-    ) -> AppSetup<Self, Self::Output>;
+    fn create(message_sender: AppSender<Self::Message>) -> AppSetup<Self, Self::Output>;
 
     #[allow(unused_variables)]
     fn on_message(&mut self, message: Self::Message) {

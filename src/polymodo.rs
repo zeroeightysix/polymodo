@@ -1,7 +1,7 @@
 use crate::app_surface_driver;
 use crate::app_surface_driver::{create_app_driver, new_app_key, AppEvent, AppKey};
 use crate::mode::launch::Launcher;
-use crate::windowing::app::{App, AppSetup, AppSender};
+use crate::windowing::app::{App, AppSender, AppSetup};
 use crate::windowing::client::WaylandClient;
 use crate::windowing::surface::Surface;
 use egui::ViewportId;
