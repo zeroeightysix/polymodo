@@ -5,6 +5,17 @@ use crate::xdg::DesktopEntry;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
+use std::sync::OnceLock;
+
+fn desktop_entries() -> &'static Vec<SearchRow> {
+    static DESKTOP_ENTRIES: OnceLock<Vec<SearchRow>> = OnceLock::new();
+    DESKTOP_ENTRIES.get_or_init(|| {
+        crate::xdg::find_desktop_entries()
+            .into_iter()
+            .map(|v| SearchRow(&*Box::leak(Box::new(v))))
+            .collect()
+    })
+}
 
 pub struct Launcher {
     search_input: String,
@@ -115,10 +126,7 @@ impl App for Launcher {
     type Output = ();
 
     fn create(message_sender: AppSender<Self::Message>) -> AppSetup<Self, Self::Output> {
-        let desktop_entries: Vec<_> = crate::xdg::find_desktop_entries()
-            .into_iter()
-            .map(|v| SearchRow(&*Box::leak(Box::new(v))))
-            .collect();
+        let desktop_entries: Vec<_> = desktop_entries().to_vec();
 
         let mut config = nucleo::Config::DEFAULT;
         config.prefer_prefix = true;
