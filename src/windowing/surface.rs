@@ -154,7 +154,6 @@ impl Surface {
     pub fn configure_surface(&self) {
         let format = self.render_state.target_format;
         let (width, height) = self.size;
-        log::trace!("configure wgpu surface");
 
         self.wgpu_surface.configure(
             &self.render_state.device,

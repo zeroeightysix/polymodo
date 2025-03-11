@@ -1,7 +1,7 @@
 use crate::app_surface_driver;
 use crate::app_surface_driver::{create_app_driver, new_app_key, AppEvent, AppKey};
 use crate::mode::launch::Launcher;
-use crate::windowing::app::AppSender;
+use crate::windowing::app::{App, AppSetup, AppSender};
 use crate::windowing::client::WaylandClient;
 use crate::windowing::surface::Surface;
 use egui::ViewportId;
@@ -33,12 +33,12 @@ pub async fn run() -> anyhow::Result<std::convert::Infallible> {
     {
         let key = new_app_key();
         let send = AppSender::new(key, surf_driver_app_sender.clone());
-        let (launcher, launcher_effect) = Launcher::create(send);
-        let driver = create_app_driver(key, launcher);
+        let AppSetup { app, effects } = Launcher::create(send);
+        let driver = create_app_driver(key, app);
 
         tokio::task::spawn_local(async {
             // TODO
-            let _ = launcher_effect.await;
+            let _ = effects.join_all().await;
         });
 
         surf_driver_app_sender

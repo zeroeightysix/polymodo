@@ -1,8 +1,7 @@
 use crate::fuzzy_search::{FuzzySearch, Row};
-use crate::windowing::app::{App, AppSender};
+use crate::windowing::app::{App, AppSender, AppSetup};
 use crate::windowing::surface::LayerSurfaceOptions;
 use crate::xdg::DesktopEntry;
-use std::future::Future;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
@@ -16,38 +15,6 @@ pub struct Launcher {
 }
 
 impl Launcher {
-    pub fn create(message_sender: AppSender<Message>) -> (Self, impl Future<Output = ()>) {
-        let desktop_entries: Vec<_> = crate::xdg::find_desktop_entries()
-            .into_iter()
-            .map(|v| SearchRow(&*Box::leak(Box::new(v))))
-            .collect();
-
-        let mut config = nucleo::Config::DEFAULT;
-        config.prefer_prefix = true;
-        let search = FuzzySearch::create_with_config(config);
-        search.push_all(desktop_entries);
-
-        let launcher = Launcher {
-            search_input: String::new(),
-            focus_search: true,
-            // desktop_entries,
-            search,
-            show_entries: Vec::new(),
-            selected_entry_idx: 0,
-        };
-
-        let notify = launcher.search.notify();
-        let effect = async move {
-            loop {
-                notify.notified().await;
-
-                message_sender.send(Message::Search).unwrap()
-            }
-        };
-
-        (launcher, effect)
-    }
-
     pub fn layer_surface_options() -> LayerSurfaceOptions<'static> {
         LayerSurfaceOptions {
             namespace: Some("polymodo"),
@@ -145,6 +112,40 @@ impl Launcher {
 
 impl App for Launcher {
     type Message = Message;
+    type Output = ();
+
+    fn create(message_sender: AppSender<Self::Message>) -> AppSetup<Self, Self::Output> {
+        let desktop_entries: Vec<_> = crate::xdg::find_desktop_entries()
+            .into_iter()
+            .map(|v| SearchRow(&*Box::leak(Box::new(v))))
+            .collect();
+
+        let mut config = nucleo::Config::DEFAULT;
+        config.prefer_prefix = true;
+        let search = FuzzySearch::create_with_config(config);
+        search.push_all(desktop_entries);
+
+        let launcher = Launcher {
+            search_input: String::new(),
+            focus_search: true,
+            // desktop_entries,
+            search,
+            show_entries: Vec::new(),
+            selected_entry_idx: 0,
+        };
+
+        let notify = launcher.search.notify();
+
+        AppSetup::new(launcher)
+            // effect for searching
+            .spawn_local(async move {
+                loop {
+                    notify.notified().await;
+
+                    message_sender.send(Message::Search).unwrap()
+                }
+            })
+    }
 
     fn on_message(&mut self, message: Self::Message) {
         match message {
