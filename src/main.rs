@@ -1,5 +1,3 @@
-#![feature(let_chains)]
-
 mod config;
 mod fuzzy_search;
 mod mode;

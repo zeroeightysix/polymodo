@@ -21,5 +21,4 @@ pub enum WindowingError {
     WaylandError(wayland_backend::client::WaylandError),
     DispatchError(sctk::reexports::client::DispatchError),
     IoError(std::io::Error),
-    NoSuchSurface,
 }

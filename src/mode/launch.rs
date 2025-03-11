@@ -1,10 +1,11 @@
 use crate::fuzzy_search::{FuzzySearch, Row};
-use crate::windowing::app::App;
+use crate::windowing::app::{App, AppSender};
+use crate::windowing::surface::LayerSurfaceOptions;
 use crate::xdg::DesktopEntry;
+use std::future::Future;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
-use crate::windowing::surface::LayerSurfaceOptions;
 
 pub struct Launcher {
     search_input: String,
@@ -15,7 +16,7 @@ pub struct Launcher {
 }
 
 impl Launcher {
-    pub fn create() -> Self {
+    pub fn create(message_sender: AppSender<Message>) -> (Self, impl Future<Output = ()>) {
         let desktop_entries: Vec<_> = crate::xdg::find_desktop_entries()
             .into_iter()
             .map(|v| SearchRow(&*Box::leak(Box::new(v))))
@@ -26,16 +27,27 @@ impl Launcher {
         let search = FuzzySearch::create_with_config(config);
         search.push_all(desktop_entries);
 
-        Launcher {
+        let launcher = Launcher {
             search_input: String::new(),
             focus_search: true,
             // desktop_entries,
             search,
             show_entries: Vec::new(),
             selected_entry_idx: 0,
-        }
+        };
+
+        let notify = launcher.search.notify();
+        let effect = async move {
+            loop {
+                notify.notified().await;
+                
+                message_sender.send(Message::Search).unwrap()
+            }
+        };
+
+        (launcher, effect)
     }
-    
+
     pub fn layer_surface_options() -> LayerSurfaceOptions<'static> {
         LayerSurfaceOptions {
             namespace: Some("polymodo"),
@@ -43,7 +55,6 @@ impl Launcher {
             height: 400,
             ..Default::default()
         }
-        
     }
 
     fn app_launcher_ui(&mut self, ui: &mut egui::Ui) {
@@ -130,8 +141,12 @@ impl Launcher {
             },
         );
     }
+}
 
-    fn on_message(&mut self, message: Message) {
+impl App for Launcher {
+    type Message = Message;
+
+    fn on_message(&mut self, message: Self::Message) {
         match message {
             Message::Search => {
                 self.search.tick();
@@ -139,9 +154,7 @@ impl Launcher {
             }
         }
     }
-}
 
-impl App for Launcher {
     fn render(&mut self, ctx: &egui::Context) {
         let mut frame = egui::Frame::window(&ctx.style());
         frame.shadow.offset[1] = frame.shadow.offset[0];
@@ -160,7 +173,7 @@ impl App for Launcher {
 }
 
 #[derive(Debug, Clone)]
-enum Message {
+pub enum Message {
     Search,
 }
 

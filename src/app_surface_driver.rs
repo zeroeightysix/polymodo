@@ -1,6 +1,7 @@
 use crate::windowing::app::App;
-use crate::windowing::surface::{LayerSurfaceOptions, Surface, SurfaceId};
 use crate::windowing::client::{SurfaceEvent, SurfaceSetup};
+use crate::windowing::surface::{LayerSurfaceOptions, Surface, SurfaceId};
+use crate::windowing::WindowingError;
 use anyhow::Context;
 use egui::ViewportId;
 use rand::random;
@@ -8,6 +9,22 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 pub type AppKey = u32;
+
+pub fn create_app_driver<A: App>(key: AppKey, app: A) -> impl AppDriver
+where
+    A::Message: 'static,
+{
+    AppDriverImpl {
+        key,
+        app,
+        ctx: new_context(),
+    }
+}
+
+fn new_context() -> egui::Context {
+    // TODO
+    egui::Context::default()
+}
 
 pub fn new_app_key() -> AppKey {
     random()
@@ -19,7 +36,8 @@ pub fn new_app_key() -> AppKey {
 /// As polymodo has a number of sources that will want to cause a surface repaint, this struct is
 /// generally used in a separate task and driven by a mpsc channel, hence the "Driver" in its name.
 pub struct AppSurfaceDriver {
-    apps: Vec<(AppKey, Box<dyn App>, egui::Context)>,
+    // apps: Vec<(AppKey, Box<dyn App>, egui::Context)>,
+    apps: Vec<Box<dyn AppDriver>>,
     // To perform the render requests, `Polymodo` needs to know which surfaces (or viewports) belong
     // to which apps.
     app_surface_map: Vec<(FullSurfaceId, AppKey)>, // `find` in a vec is faster for small quantities
@@ -40,7 +58,8 @@ impl AppSurfaceDriver {
     pub async fn handle_event(&mut self, event: SurfaceEvent) -> anyhow::Result<()> {
         match event {
             SurfaceEvent::RepaintAllWithEvents => {
-                let ids = self.surfaces
+                let ids = self
+                    .surfaces
                     .iter()
                     .filter(|surf| surf.has_events())
                     .map(|surf| surf.surface_id())
@@ -69,7 +88,7 @@ impl AppSurfaceDriver {
 
                 Ok(())
             }
-            SurfaceEvent::PressKey(_, None, None) => { Ok(()) }, // no text and no key -> ignore.
+            SurfaceEvent::PressKey(_, None, None) => Ok(()), // no text and no key -> ignore.
             SurfaceEvent::PressKey(id, text, key) => {
                 let surface = self.surface_by_id(&id).context("No such surface")?;
                 if let Some(text) = text {
@@ -80,7 +99,7 @@ impl AppSurfaceDriver {
                 }
                 Ok(())
             }
-            SurfaceEvent::ReleaseKey(_, None) => { Ok(()) } // no key -> ignore
+            SurfaceEvent::ReleaseKey(_, None) => Ok(()), // no key -> ignore
             SurfaceEvent::ReleaseKey(id, Some(key)) => {
                 let surface = self.surface_by_id(&id).context("No such surface")?;
                 surface.on_key(key, false);
@@ -101,12 +120,15 @@ impl AppSurfaceDriver {
 
     async fn add_app(
         &mut self,
-        app_key: AppKey,
-        app: Box<dyn App>,
+        app_driver: Box<dyn AppDriver>,
         layer_surface_options: LayerSurfaceOptions<'static>,
     ) -> anyhow::Result<()> {
+        let app_key = app_driver.key();
+
         let viewport_id = ViewportId::ROOT;
-        let initial_surface = self.surface_setup.create_surface(viewport_id, layer_surface_options)
+        let initial_surface = self
+            .surface_setup
+            .create_surface(viewport_id, layer_surface_options)
             .await?;
         let surface_id = initial_surface.surface_id();
         let fid = FullSurfaceId {
@@ -116,22 +138,33 @@ impl AppSurfaceDriver {
 
         self.surfaces.push(initial_surface);
         self.app_surface_map.push((fid, app_key));
-        self.apps.push((app_key, app, Self::new_context()));
-        
+        self.apps.push(app_driver);
+
         Ok(())
     }
-    
-    fn new_context() -> egui::Context {
-        // TODO
-        egui::Context::default()
+
+    fn on_app_message(
+        &mut self,
+        app_key: AppKey,
+        message: Box<dyn std::any::Any>,
+    ) -> anyhow::Result<()> {
+        let driver = self
+            .apps
+            .iter_mut()
+            .find(|driver| driver.key() == app_key)
+            .context("No such app")?;
+
+        driver.on_message(message);
+
+        Ok(())
     }
-    
+
     fn paint(&mut self, surface_id: &SurfaceId) -> anyhow::Result<()> {
         // this method is quite hideous because it mostly just duplicates code from the above
         // functions. unfortunately, they're inlined because the borrow checker (as of now)
         // is still quite dumb when deducing if functions return disjoint references to borrowed
         // data; so inlining is the easiest solution for that here.
-        
+
         // surface = surface_by_id(surface_id);
         let surface = self
             .surfaces
@@ -148,24 +181,16 @@ impl AppSurfaceDriver {
             .context("No such app")?;
 
         // get the app and corresponding context for rendering
-        let (_, app, ref ctx) = self.apps.iter_mut()
-            .find(|(key, _, _)| *key == app_key)
+        let app = self
+            .apps
+            .iter_mut()
+            .find(|app| app.key() == app_key)
             .context("No such app")?;
 
-        // and paint it.
-        let render_ui = move |ctx: &egui::Context| {
-            app.render(ctx);
-        };
-        surface.render(ctx, render_ui)?;
+        // and paint |it.
+        app.paint(surface)?;
 
         Ok(())
-    }
-
-    fn find_app_key_for_surf(&self, id: &SurfaceId) -> Option<AppKey> {
-        self.app_surface_map
-            .iter()
-            .find(|(fsid, _)| &fsid.surface_id == id)
-            .map(|(_, app_key)| *app_key)
     }
 
     fn surface_by_id(&mut self, surface_id: &SurfaceId) -> Option<&mut Surface> {
@@ -175,10 +200,47 @@ impl AppSurfaceDriver {
     }
 }
 
+pub trait AppDriver {
+    fn key(&self) -> AppKey;
+
+    fn paint(&mut self, surface: &mut Surface) -> Result<(), WindowingError>;
+
+    fn on_message(&mut self, message: Box<dyn std::any::Any>);
+}
+
+struct AppDriverImpl<A: App> {
+    key: AppKey,
+    app: A,
+    ctx: egui::Context,
+}
+
+impl<A: App> AppDriver for AppDriverImpl<A>
+where
+    A::Message: 'static,
+{
+    fn key(&self) -> AppKey {
+        self.key
+    }
+
+    fn paint(&mut self, surface: &mut Surface) -> Result<(), WindowingError> {
+        surface.render(&self.ctx, |ctx: &egui::Context| {
+            self.app.render(ctx);
+        })
+    }
+
+    fn on_message(&mut self, message: Box<dyn std::any::Any>) {
+        let Ok(message) = message.downcast() else {
+            return;
+        };
+
+        self.app.on_message(*message);
+    }
+}
+
 pub fn create_surface_driver_task(
     mut event_receive: mpsc::Receiver<SurfaceEvent>,
-    mut app_receive: local_channel::mpsc::Receiver<NewAppEvent>,
-    surface_setup: SurfaceSetup
+    mut app_receive: local_channel::mpsc::Receiver<AppEvent>,
+    surface_setup: SurfaceSetup,
 ) -> JoinHandle<std::convert::Infallible> {
     tokio::task::spawn_local(async move {
         let mut driver = AppSurfaceDriver::create(surface_setup);
@@ -191,10 +253,32 @@ pub fn create_surface_driver_task(
             // so our application really has no business still being alive.
             std::process::exit(1);
         }
-        
-        async fn on_event(driver: &mut AppSurfaceDriver, event: SurfaceEvent) {
+
+        async fn on_surface_event(driver: &mut AppSurfaceDriver, event: SurfaceEvent) {
             if let Err(e) = driver.handle_event(event).await {
                 log::error!("surface driver handle event error: {}", e);
+            }
+        }
+
+        async fn on_app_event(driver: &mut AppSurfaceDriver, event: AppEvent) {
+            match event {
+                AppEvent::NewApp {
+                    app_driver,
+                    layer_surface_options,
+                } => {
+                    let app_key = app_driver.key();
+                    if let Err(e) = driver.add_app(app_driver, layer_surface_options).await {
+                        // TODO: even though this is rare,
+                        // we probably need some feedback here,
+                        // to kill the app that wasn't able to spawn.
+                        log::error!("failed to spawn the surface for app {app_key}; it will probably stay alive forever (this is a leak): {e}");
+                    }
+                }
+                AppEvent::AppMessage { app_key, message } => {
+                    if driver.on_app_message(app_key, message).is_err() {
+                        log::error!("could not deliver message to app {app_key}; this is a bug.");
+                    }
+                }
             }
         }
 
@@ -204,34 +288,30 @@ pub fn create_surface_driver_task(
                     let Some(event) = event else {
                         die_horrific_death()
                     };
-                    
-                    on_event(&mut driver, event).await;
+
+                    on_surface_event(&mut driver, event).await;
                 }
                 event = app_receive.recv() => {
-                    let Some(NewAppEvent {
-                        app_key,
-                        app,
-                        layer_surface_options
-                    }) = event else {
+                    let Some(app_event) = event else {
                         die_horrific_death()
                     };
-                    
-                    if let Err(e) = driver.add_app(app_key, app, layer_surface_options).await {
-                        // TODO: even though this is rare,
-                        // we probably need some feedback here,
-                        // to kill the app that wasn't able to spawn.
-                        log::error!("failed to spawn the surface for app {app_key}; it will probably stay alive forever (this is a leak): {e}");
-                    }
+
+                    on_app_event(&mut driver, app_event).await;
                 }
             }
         }
     })
 }
 
-pub struct NewAppEvent {
-    pub app_key: AppKey,
-    pub app: Box<dyn App>,
-    pub layer_surface_options: LayerSurfaceOptions<'static>
+pub enum AppEvent {
+    NewApp {
+        app_driver: Box<dyn AppDriver>,
+        layer_surface_options: LayerSurfaceOptions<'static>,
+    },
+    AppMessage {
+        app_key: AppKey,
+        message: Box<dyn std::any::Any>,
+    },
 }
 
 #[derive(Debug, Clone)]

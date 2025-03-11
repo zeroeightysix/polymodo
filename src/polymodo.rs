@@ -1,5 +1,5 @@
 use crate::app_surface_driver;
-use crate::app_surface_driver::{new_app_key, AppKey, NewAppEvent};
+use crate::app_surface_driver::{create_app_driver, new_app_key, AppEvent, AppKey};
 use crate::mode::launch::Launcher;
 use crate::windowing::surface::Surface;
 use crate::windowing::client::WaylandClient;
@@ -7,6 +7,7 @@ use egui::ViewportId;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use crate::windowing::app::AppSender;
 
 pub async fn run() -> anyhow::Result<std::convert::Infallible> {
     // two channels: one for events (that is Send + Sync)
@@ -30,13 +31,20 @@ pub async fn run() -> anyhow::Result<std::convert::Infallible> {
     let dispatch_task = create_dispatch_task(client);
 
     {
-        let launcher = Launcher::create();
+        let key = new_app_key();
+        let send = AppSender::new(key, surf_driver_app_sender.clone());
+        let (launcher, launcher_effect) = Launcher::create(send);
+        let driver = create_app_driver(key, launcher);
 
+        tokio::task::spawn_local(async {
+            // TODO
+            let _ = launcher_effect.await;
+        });
+        
         surf_driver_app_sender
-            .send(NewAppEvent {
-                app_key: new_app_key(),
-                app: Box::new(launcher),
-                layer_surface_options: Launcher::layer_surface_options()
+            .send(AppEvent::NewApp {
+                app_driver: Box::new(driver),
+                layer_surface_options: Launcher::layer_surface_options(),
             })
             .unwrap();
     }

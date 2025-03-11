@@ -24,7 +24,6 @@ pub struct Surface {
     // which egui viewport was this surface created for?
     viewport_id: ViewportId,
     exit: bool,
-    first_configure: bool,
     default_size: Option<(u32, u32)>,
     size: (u32, u32),
     layer_surface: LayerSurface,
@@ -48,7 +47,6 @@ impl Surface {
         Self {
             viewport_id,
             exit: false,
-            first_configure: true,
             default_size: Some(size),
             size,
             layer_surface,
@@ -253,10 +251,6 @@ impl Surface {
 
     pub fn set_exit(&mut self) {
         self.exit = true;
-    }
-
-    pub fn is_first_configure(&self) -> bool {
-        self.first_configure
     }
 
     pub fn on_focus(&mut self, focus: bool) {
