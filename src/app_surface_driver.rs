@@ -1,5 +1,5 @@
 use crate::windowing::app::App;
-use crate::windowing::surface::{Surface, SurfaceId};
+use crate::windowing::surface::{LayerSurfaceOptions, Surface, SurfaceId};
 use crate::windowing::client::{SurfaceEvent, SurfaceSetup};
 use anyhow::Context;
 use egui::ViewportId;
@@ -103,9 +103,10 @@ impl AppSurfaceDriver {
         &mut self,
         app_key: AppKey,
         app: Box<dyn App>,
+        layer_surface_options: LayerSurfaceOptions<'static>,
     ) -> anyhow::Result<()> {
         let viewport_id = ViewportId::ROOT;
-        let initial_surface = self.surface_setup.create_surface(viewport_id, Default::default())
+        let initial_surface = self.surface_setup.create_surface(viewport_id, layer_surface_options)
             .await?;
         let surface_id = initial_surface.surface_id();
         let fid = FullSurfaceId {
@@ -209,12 +210,13 @@ pub fn create_surface_driver_task(
                 event = app_receive.recv() => {
                     let Some(NewAppEvent {
                         app_key,
-                        app
+                        app,
+                        layer_surface_options
                     }) = event else {
                         die_horrific_death()
                     };
                     
-                    if let Err(e) = driver.add_app(app_key, app).await {
+                    if let Err(e) = driver.add_app(app_key, app, layer_surface_options).await {
                         // TODO: even though this is rare,
                         // we probably need some feedback here,
                         // to kill the app that wasn't able to spawn.
@@ -229,6 +231,7 @@ pub fn create_surface_driver_task(
 pub struct NewAppEvent {
     pub app_key: AppKey,
     pub app: Box<dyn App>,
+    pub layer_surface_options: LayerSurfaceOptions<'static>
 }
 
 #[derive(Debug, Clone)]

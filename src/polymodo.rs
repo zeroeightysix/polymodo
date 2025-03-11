@@ -36,6 +36,7 @@ pub async fn run() -> anyhow::Result<std::convert::Infallible> {
             .send(NewAppEvent {
                 app_key: new_app_key(),
                 app: Box::new(launcher),
+                layer_surface_options: Launcher::layer_surface_options()
             })
             .unwrap();
     }

@@ -153,7 +153,7 @@ impl Surface {
         }
     }
 
-    fn configure_surface(&self) {
+    pub fn configure_surface(&self) {
         let format = self.render_state.target_format;
         let (width, height) = self.size;
         log::trace!("configure wgpu surface");
@@ -286,7 +286,7 @@ impl Default for LayerSurfaceOptions<'_> {
             wgpu_options: Default::default(),
             layer: Layer::Top,
             namespace: None,
-            anchor: Anchor::all(),
+            anchor: Anchor::empty(),
             width: 1024,
             height: 1024,
         }

@@ -4,6 +4,7 @@ use crate::xdg::DesktopEntry;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
+use crate::windowing::surface::LayerSurfaceOptions;
 
 pub struct Launcher {
     search_input: String,
@@ -33,6 +34,16 @@ impl Launcher {
             show_entries: Vec::new(),
             selected_entry_idx: 0,
         }
+    }
+    
+    pub fn layer_surface_options() -> LayerSurfaceOptions<'static> {
+        LayerSurfaceOptions {
+            namespace: Some("polymodo"),
+            width: 350,
+            height: 400,
+            ..Default::default()
+        }
+        
     }
 
     fn app_launcher_ui(&mut self, ui: &mut egui::Ui) {
