@@ -25,14 +25,16 @@ pub struct AppSetup<A, O> {
     pub effects: JoinSet<O>,
 }
 
-impl<A, O: 'static> AppSetup<A, O> {
+impl<A, O> AppSetup<A, O> {
     pub fn new(app: A) -> Self {
         Self {
             app,
             effects: JoinSet::new(),
         }
     }
+}
 
+impl<A, O: 'static> AppSetup<A, O> {
     pub fn spawn_local<F>(self, future: F) -> Self
     where
         F: Future<Output = O> + 'static,
