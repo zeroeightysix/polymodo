@@ -246,7 +246,7 @@ impl SurfaceSetup {
             wgpu_surface,
             render_state,
         );
-        
+
         surface.configure_surface();
 
         Ok(surface)
@@ -424,7 +424,7 @@ impl KeyboardHandler for Dispatcher {
         if self.keyboard_entered_surface.is_some() {
             log::warn!("keyboard enter event with an already entered keyboard surface");
         }
-        
+
         self.keyboard_entered_surface = Some(wl_surface.clone());
     }
 

@@ -155,6 +155,19 @@ impl AppSurfaceDriver {
             .context("No such app")?;
 
         driver.on_message(message);
+        
+        // After processing a message, redraw the app, assuming its contents have been changed.
+        // first: find the surfaces for this app
+        let app_key = driver.key();
+        let ids = self.app_surface_map.iter()
+            .filter(|(_, key)| *key == app_key)
+            .map(|(fid, _)| &fid.surface_id)
+            .collect::<Vec<_>>();
+        for surface in &mut self.surfaces {
+            if ids.contains(&&surface.surface_id()) {
+                driver.paint(surface)?
+            }
+        }
 
         Ok(())
     }
@@ -304,10 +317,12 @@ pub fn create_surface_driver_task(
 }
 
 pub enum AppEvent {
+    /// Create a new app from its driver and spawn its initial surface.
     NewApp {
         app_driver: Box<dyn AppDriver>,
         layer_surface_options: LayerSurfaceOptions<'static>,
     },
+    /// An App sent a message to itself, which necessitates an `on_message` call from the driver
     AppMessage {
         app_key: AppKey,
         message: Box<dyn std::any::Any>,
