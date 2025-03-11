@@ -4,6 +4,7 @@ use crate::mode::launch::Launcher;
 use crate::windowing::app::{App, AppSender, AppSetup};
 use crate::windowing::client::WaylandClient;
 use crate::windowing::surface::Surface;
+use anyhow::Context;
 use egui::ViewportId;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -30,28 +31,38 @@ pub async fn run() -> anyhow::Result<std::convert::Infallible> {
     // set up the dispatch task which polls wayland and sends client to the surface app driver
     let dispatch_task = create_dispatch_task(client);
 
-    {
-        let key = new_app_key();
-        let send = AppSender::new(key, surf_driver_app_sender.clone());
-        let AppSetup { app, effects } = Launcher::create(send);
-        let driver = create_app_driver(key, app);
-
-        tokio::task::spawn_local(async {
-            // TODO
-            let _ = effects.join_all().await;
-        });
-
-        surf_driver_app_sender
-            .send(AppEvent::NewApp {
-                app_driver: Box::new(driver),
-                layer_surface_options: Launcher::layer_surface_options(),
-            })
-            .unwrap();
-    }
+    spawn_app::<Launcher>(surf_driver_app_sender)?;
 
     // both surf_drive_task and dispatch_task should never complete.
     // we could join and wait on them here, but either will never finish.. so we just pick one:
     Ok(dispatch_task.await?)
+}
+
+fn spawn_app<A: App + 'static>(
+    surf_driver_app_sender: local_channel::mpsc::Sender<AppEvent>,
+) -> anyhow::Result<JoinHandle<<A as App>::Output>>
+where
+    A::Message: 'static,
+    A::Output: 'static,
+{
+    // create a new key for this app.
+    // (it's just a number)
+    let key = new_app_key();
+    let send = AppSender::new(key, surf_driver_app_sender.clone());
+    let AppSetup { app, mut effects } = A::create(send);
+    let driver = create_app_driver(key, app);
+
+    surf_driver_app_sender
+        .send(AppEvent::NewApp {
+            app_driver: Box::new(driver),
+            layer_surface_options: Launcher::layer_surface_options(),
+        })
+        .ok()
+        .context("Failed to spawn launcher app")?;
+
+    Ok(tokio::task::spawn_local(async move {
+        effects.join_next().await.unwrap().unwrap() // TODO: we need an abstraction on AppSetup to guarantee an effect
+    }))
 }
 
 fn create_dispatch_task(mut client: WaylandClient) -> JoinHandle<std::convert::Infallible> {
