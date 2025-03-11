@@ -155,11 +155,13 @@ impl AppSurfaceDriver {
             .context("No such app")?;
 
         driver.on_message(message);
-        
+
         // After processing a message, redraw the app, assuming its contents have been changed.
         // first: find the surfaces for this app
         let app_key = driver.key();
-        let ids = self.app_surface_map.iter()
+        let ids = self
+            .app_surface_map
+            .iter()
             .filter(|(_, key)| *key == app_key)
             .map(|(fid, _)| &fid.surface_id)
             .collect::<Vec<_>>();

@@ -1,5 +1,6 @@
-use crate::windowing::surface::{LayerSurfaceOptions, Surface, SurfaceId};
 use crate::windowing::client::SurfaceEvent::NeedsRepaint;
+use crate::windowing::convert::keysym_to_key;
+use crate::windowing::surface::{LayerSurfaceOptions, Surface, SurfaceId};
 use crate::windowing::WindowingError;
 use egui::ViewportId;
 use egui_wgpu::{RenderState, WgpuSetup};
@@ -26,7 +27,6 @@ use std::ptr::NonNull;
 use tokio::sync::mpsc;
 use wayland_backend::client;
 use wgpu::rwh::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle};
-use crate::windowing::convert::keysym_to_key;
 
 pub struct WaylandClient {
     connection: Connection,
@@ -36,7 +36,9 @@ pub struct WaylandClient {
 }
 
 impl WaylandClient {
-    pub async fn create(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> anyhow::Result<Self> {
+    pub async fn create(
+        surf_driver_event_sender: mpsc::Sender<SurfaceEvent>,
+    ) -> anyhow::Result<Self> {
         let connection = Connection::connect_to_env().map_err(|_e| WindowingError::NotWayland)?;
         let (globals, event_queue) = globals::registry_queue_init(&connection)?;
         let qh: QueueHandle<Dispatcher> = event_queue.handle();
@@ -465,7 +467,11 @@ impl KeyboardHandler for Dispatcher {
             }
         }
 
-        self.push_event(SurfaceEvent::PressKey(wl_surface.into(), text, keysym_to_key(event.keysym)));
+        self.push_event(SurfaceEvent::PressKey(
+            wl_surface.into(),
+            text,
+            keysym_to_key(event.keysym),
+        ));
     }
 
     fn release_key(
@@ -508,7 +514,7 @@ impl KeyboardHandler for Dispatcher {
                 shift: modifiers.shift,
                 mac_cmd: false,
                 command: false,
-            }
+            },
         ));
     }
 }

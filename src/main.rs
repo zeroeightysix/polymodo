@@ -1,10 +1,10 @@
+mod app_surface_driver;
 mod config;
 mod fuzzy_search;
 mod mode;
 mod polymodo;
 mod windowing;
 mod xdg;
-mod app_surface_driver;
 
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -19,8 +19,7 @@ use tracing_subscriber::EnvFilter;
 /// Relative to whoever asks first.
 pub fn start_time() -> Instant {
     static LOCK: OnceLock<Instant> = OnceLock::new();
-    LOCK.get_or_init(|| Instant::now())
-        .clone()
+    LOCK.get_or_init(|| Instant::now()).clone()
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -39,7 +38,8 @@ async fn main() -> anyhow::Result<()> {
     LocalSet::new()
         .run_until(async move {
             polymodo::run().await.unwrap();
-        }).await;
+        })
+        .await;
 
     Ok(())
 }

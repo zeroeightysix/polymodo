@@ -1,7 +1,7 @@
 pub mod app;
+pub mod client;
 mod convert;
 pub mod surface;
-pub mod client;
 
 use derive_more::with_trait::From;
 use derive_more::{Display, Error};

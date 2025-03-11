@@ -1,3 +1,4 @@
+use crate::start_time;
 use crate::windowing::{convert, WindowingError};
 use egui::{Context, Rect, ViewportId};
 use egui_wgpu::{RenderState, ScreenDescriptor, WgpuConfiguration};
@@ -7,7 +8,6 @@ use smithay_client_toolkit::seat::pointer::PointerEventKind::*;
 use smithay_client_toolkit::shell::wlr_layer::{Anchor, Layer, LayerSurface};
 use smithay_client_toolkit::shell::WaylandSurface;
 use wayland_backend::client::ObjectId;
-use crate::start_time;
 
 #[derive(Debug, Clone)]
 pub struct LayerSurfaceOptions<'a> {

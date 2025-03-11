@@ -40,7 +40,7 @@ impl Launcher {
         let effect = async move {
             loop {
                 notify.notified().await;
-                
+
                 message_sender.send(Message::Search).unwrap()
             }
         };

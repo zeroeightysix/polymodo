@@ -1,13 +1,13 @@
 use crate::app_surface_driver;
 use crate::app_surface_driver::{create_app_driver, new_app_key, AppEvent, AppKey};
 use crate::mode::launch::Launcher;
-use crate::windowing::surface::Surface;
+use crate::windowing::app::AppSender;
 use crate::windowing::client::WaylandClient;
+use crate::windowing::surface::Surface;
 use egui::ViewportId;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use crate::windowing::app::AppSender;
 
 pub async fn run() -> anyhow::Result<std::convert::Infallible> {
     // two channels: one for events (that is Send + Sync)
@@ -40,7 +40,7 @@ pub async fn run() -> anyhow::Result<std::convert::Infallible> {
             // TODO
             let _ = launcher_effect.await;
         });
-        
+
         surf_driver_app_sender
             .send(AppEvent::NewApp {
                 app_driver: Box::new(driver),
@@ -55,11 +55,9 @@ pub async fn run() -> anyhow::Result<std::convert::Infallible> {
 }
 
 fn create_dispatch_task(mut client: WaylandClient) -> JoinHandle<std::convert::Infallible> {
-    tokio::task::spawn_blocking(move || {
-        loop {
-            if let Err(e) = client.dispatch() {
-                log::warn!("error dispatching: {e}");
-            }
+    tokio::task::spawn_blocking(move || loop {
+        if let Err(e) = client.dispatch() {
+            log::warn!("error dispatching: {e}");
         }
     })
 }
