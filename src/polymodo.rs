@@ -2,7 +2,7 @@ use crate::app_surface_driver;
 use crate::app_surface_driver::{create_app_driver, new_app_key, AppEvent, AppKey};
 use crate::mode::launch::Launcher;
 use crate::windowing::app::{App, AppSender, AppSetup};
-use crate::windowing::client::WaylandClient;
+use crate::windowing::client::{SurfaceEvent, WaylandClient};
 use crate::windowing::surface::Surface;
 use anyhow::Context;
 use egui::ViewportId;
@@ -31,7 +31,7 @@ pub async fn run() -> anyhow::Result<std::convert::Infallible> {
     // set up the dispatch task which polls wayland and sends client to the surface app driver
     let dispatch_task = create_dispatch_task(client);
 
-    spawn_app::<Launcher>(surf_driver_app_sender)?;
+    spawn_app::<Launcher>(surf_driver_event_sender, surf_driver_app_sender)?;
 
     // both surf_drive_task and dispatch_task should never complete.
     // we could join and wait on them here, but either will never finish.. so we just pick one:
@@ -39,6 +39,7 @@ pub async fn run() -> anyhow::Result<std::convert::Infallible> {
 }
 
 fn spawn_app<A: App + 'static>(
+    surf_driver_event_sender: mpsc::Sender<SurfaceEvent>,
     surf_driver_app_sender: local_channel::mpsc::Sender<AppEvent>,
 ) -> anyhow::Result<JoinHandle<<A as App>::Output>>
 where
@@ -50,7 +51,7 @@ where
     let key = new_app_key();
     let send = AppSender::new(key, surf_driver_app_sender.clone());
     let AppSetup { app, mut effects } = A::create(send);
-    let driver = create_app_driver(key, app);
+    let driver = create_app_driver(key, app, surf_driver_event_sender);
 
     surf_driver_app_sender
         .send(AppEvent::NewApp {

@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     LocalSet::new()
         .run_until(async move {
             let Err(e) = polymodo::run().await;
-            
+
             log::error!("Error running polymodo: {e}");
         })
         .await;

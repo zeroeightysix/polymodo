@@ -62,7 +62,9 @@ impl Surface {
         &mut self,
         ctx: &Context,
         render_ui: impl FnMut(&Context),
-    ) -> Result<(), WindowingError> {
+    ) -> Result<egui::PlatformOutput, WindowingError> {
+        let output = self.update(ctx, render_ui);
+
         let output_frame = self.wgpu_surface.get_current_texture()?;
         let output_view = output_frame
             .texture
@@ -88,9 +90,6 @@ impl Surface {
             })
             .forget_lifetime();
 
-        let raw_input = self.next_raw_input();
-        let output = ctx.run(raw_input, render_ui);
-        // TODO: output.platform_output
         let prims = ctx.tessellate(output.shapes, output.pixels_per_point);
         {
             let mut renderer = self.render_state.renderer.write();
@@ -130,7 +129,16 @@ impl Surface {
 
         output_frame.present();
 
-        Ok(())
+        Ok(output.platform_output)
+    }
+
+    pub fn update(
+        &mut self,
+        ctx: &Context,
+        render_ui: impl FnMut(&Context) + Sized,
+    ) -> egui::FullOutput {
+        let raw_input = self.next_raw_input();
+        ctx.run(raw_input, render_ui)
     }
 
     fn next_raw_input(&mut self) -> egui::RawInput {
@@ -242,6 +250,11 @@ impl Surface {
     #[inline]
     pub fn modifiers(&self) -> egui::Modifiers {
         self.modifiers
+    }
+
+    #[inline]
+    pub fn viewport_id(&self) -> ViewportId {
+        self.viewport_id
     }
 
     pub fn set_modifiers(&mut self, modifiers: egui::Modifiers) {

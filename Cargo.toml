@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Windowing
-tokio = { version = "1", features = ["rt", "sync", "net", "macros"] }
+tokio = { version = "1", features = ["rt", "sync", "net", "time", "macros"] }
 smithay-client-toolkit = { version = "0.19.2", default-features = false, features = ["xkbcommon"] }
 wayland-backend = { version = "0.3", features = ["client_system", "dlopen"] }
 wgpu = "24.0.1"

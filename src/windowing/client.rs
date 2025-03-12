@@ -1,4 +1,4 @@
-use crate::windowing::client::SurfaceEvent::NeedsRepaint;
+use crate::windowing::client::SurfaceEvent::NeedsRepaintSurface;
 use crate::windowing::convert::keysym_to_key;
 use crate::windowing::surface::{LayerSurfaceOptions, Surface, SurfaceId};
 use crate::windowing::WindowingError;
@@ -124,7 +124,7 @@ impl Dispatcher {
     pub fn dispatch(&mut self, event_queue: &mut EventQueue<Self>) -> anyhow::Result<()> {
         event_queue.blocking_dispatch(self)?;
 
-        self.push_event(SurfaceEvent::RepaintAllWithEvents);
+        self.push_event(SurfaceEvent::UpdateAllWithEvents);
 
         Ok(())
     }
@@ -137,8 +137,11 @@ impl Dispatcher {
 }
 
 pub enum SurfaceEvent {
-    RepaintAllWithEvents,
-    NeedsRepaint(SurfaceId),
+    UpdateAllWithEvents,
+    NeedsRepaintSurface(SurfaceId),
+    /// Sent when a repaint is requested from egui. This includes the cumulative pass number,
+    /// which should be compared with [egui::Context::cumulative_pass_nr] and be ignored if it is lower.
+    NeedsRepaintViewport(ViewportId, u64),
     Closed(SurfaceId),
     Configure(SurfaceId, LayerSurfaceConfigure),
     KeyboardFocus(SurfaceId, bool),
@@ -251,7 +254,7 @@ impl CompositorHandler for Dispatcher {
         _time: u32,
     ) {
         log::trace!("frame");
-        self.push_event(NeedsRepaint(surface.into()));
+        self.push_event(NeedsRepaintSurface(surface.into()));
     }
 
     fn surface_enter(

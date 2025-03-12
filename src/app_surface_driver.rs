@@ -5,25 +5,57 @@ use crate::windowing::WindowingError;
 use anyhow::Context;
 use egui::ViewportId;
 use rand::random;
+use std::cell::Cell;
+use std::sync::Mutex;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::task::{AbortHandle, JoinHandle};
 
 pub type AppKey = u32;
 
-pub fn create_app_driver<A: App>(key: AppKey, app: A) -> impl AppDriver
+pub fn create_app_driver<A: App>(
+    key: AppKey,
+    app: A,
+    surf_driver_event_sender: mpsc::Sender<SurfaceEvent>,
+) -> impl AppDriver
 where
     A::Message: 'static,
 {
     AppDriverImpl {
         key,
         app,
-        ctx: new_context(),
+        ctx: new_context(surf_driver_event_sender),
+        last_rendered_pass: Cell::new(0),
     }
 }
 
-fn new_context() -> egui::Context {
-    // TODO
-    egui::Context::default()
+fn new_context(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> egui::Context {
+    let context = egui::Context::default();
+    let last_task: Mutex<Option<AbortHandle>> = Default::default();
+
+    // set up the repaint callback.
+    // egui will let us know when a repaint is required, optionally with a delay.
+    // this logic handles that:
+    context.set_request_repaint_callback(move |info| {
+        let sender = surf_driver_event_sender.clone();
+
+        // keep the handle to this task,
+        let abort_handle = tokio::spawn(async move {
+            tokio::time::sleep(info.delay).await;
+
+            let _ = sender.try_send(SurfaceEvent::NeedsRepaintViewport(
+                info.viewport_id,
+                info.current_cumulative_pass_nr,
+            ));
+        })
+        .abort_handle();
+
+        // because we can safely abort the last one, and store the current (new) task as the last one.
+        if let Some(handle) = last_task.lock().unwrap().replace(abort_handle) {
+            handle.abort();
+        }
+    });
+
+    context
 }
 
 pub fn new_app_key() -> AppKey {
@@ -57,7 +89,7 @@ impl AppSurfaceDriver {
 
     pub async fn handle_event(&mut self, event: SurfaceEvent) -> anyhow::Result<()> {
         match event {
-            SurfaceEvent::RepaintAllWithEvents => {
+            SurfaceEvent::UpdateAllWithEvents => {
                 let ids = self
                     .surfaces
                     .iter()
@@ -65,11 +97,18 @@ impl AppSurfaceDriver {
                     .map(|surf| surf.surface_id())
                     .collect::<Vec<_>>();
                 for surf_id in ids {
-                    self.paint(&surf_id)?;
+                    self.update(&surf_id)?;
                 }
                 Ok(())
             }
-            SurfaceEvent::NeedsRepaint(id) => self.paint(&id),
+            SurfaceEvent::NeedsRepaintSurface(id) => self.paint(&id, None),
+            SurfaceEvent::NeedsRepaintViewport(vid, pass_nr) => {
+                let id = self
+                    .surface_id_by_viewport_id(vid)
+                    .context("No such surface")?;
+                self.paint(&id, Some(pass_nr))?;
+                Ok(())
+            }
             SurfaceEvent::Closed(id) => {
                 let surface = self.surface_by_id(&id).context("No such surface")?;
                 surface.set_exit();
@@ -80,7 +119,7 @@ impl AppSurfaceDriver {
                 let surface = self.surface_by_id(&id).context("No such surface")?;
                 surface.update_size(width, height);
 
-                self.paint(&id)
+                self.paint(&id, None)
             }
             SurfaceEvent::KeyboardFocus(id, focus) => {
                 let surface = self.surface_by_id(&id).context("No such surface")?;
@@ -167,14 +206,18 @@ impl AppSurfaceDriver {
             .collect::<Vec<_>>();
         for surface in &mut self.surfaces {
             if ids.contains(&&surface.surface_id()) {
-                driver.paint(surface)?
+                driver.paint(surface, None)?
             }
         }
 
         Ok(())
     }
 
-    fn paint(&mut self, surface_id: &SurfaceId) -> anyhow::Result<()> {
+    fn with_app_surf_mut<R>(
+        &mut self,
+        surface_id: &SurfaceId,
+        writer: impl FnOnce(&mut Box<dyn AppDriver>, &mut Surface) -> R,
+    ) -> anyhow::Result<R> {
         // this method is quite hideous because it mostly just duplicates code from the above
         // functions. unfortunately, they're inlined because the borrow checker (as of now)
         // is still quite dumb when deducing if functions return disjoint references to borrowed
@@ -202,10 +245,17 @@ impl AppSurfaceDriver {
             .find(|app| app.key() == app_key)
             .context("No such app")?;
 
-        // and paint |it.
-        app.paint(surface)?;
+        Ok(writer(app, surface))
+    }
+
+    fn paint(&mut self, surface_id: &SurfaceId, pass_nr: Option<u64>) -> anyhow::Result<()> {
+        self.with_app_surf_mut(surface_id, |app, surf| app.paint(surf, pass_nr))??;
 
         Ok(())
+    }
+
+    fn update(&mut self, surface_id: &SurfaceId) -> anyhow::Result<()> {
+        self.with_app_surf_mut(surface_id, |app, surf| app.update(surf))
     }
 
     fn surface_by_id(&mut self, surface_id: &SurfaceId) -> Option<&mut Surface> {
@@ -213,12 +263,25 @@ impl AppSurfaceDriver {
             .iter_mut()
             .find(|surf| &surf.surface_id() == surface_id)
     }
+
+    fn surface_id_by_viewport_id(&self, viewport_id: ViewportId) -> Option<SurfaceId> {
+        self.app_surface_map
+            .iter()
+            .find(|(fid, _)| fid.viewport_id == viewport_id)
+            .map(|(fid, _)| fid.surface_id.clone())
+    }
 }
 
+/// Trait to 'drive' apps, being, to call their render and on_message methods on our behalf.
+///
+/// This serves to provide a dyn compatible trait for `AppSurfaceDriver` to use, as `App` itself
+/// has GATs that make it dyn incompatible.
 pub trait AppDriver {
     fn key(&self) -> AppKey;
 
-    fn paint(&mut self, surface: &mut Surface) -> Result<(), WindowingError>;
+    fn update(&mut self, surface: &mut Surface);
+
+    fn paint(&mut self, surface: &mut Surface, pass_nr: Option<u64>) -> Result<(), WindowingError>;
 
     fn on_message(&mut self, message: Box<dyn std::any::Any>);
 }
@@ -227,6 +290,7 @@ struct AppDriverImpl<A: App> {
     key: AppKey,
     app: A,
     ctx: egui::Context,
+    last_rendered_pass: Cell<u64>,
 }
 
 impl<A: App> AppDriver for AppDriverImpl<A>
@@ -237,10 +301,30 @@ where
         self.key
     }
 
-    fn paint(&mut self, surface: &mut Surface) -> Result<(), WindowingError> {
-        surface.render(&self.ctx, |ctx: &egui::Context| {
+    fn update(&mut self, surface: &mut Surface) {
+        let _full_output = surface.update(&self.ctx, |ctx: &egui::Context| {
             self.app.render(ctx);
-        })
+        });
+        // TODO: handle the full_output
+    }
+
+    fn paint(&mut self, surface: &mut Surface, pass_nr: Option<u64>) -> Result<(), WindowingError> {
+        // If a pass number has been provided, we should skip painting in case the pass number
+        // has already passed. This is an optimization to reduce redundant paints.
+        if let Some(pass_nr) = pass_nr {
+            let last_pass = self.last_rendered_pass.get();
+            if last_pass >= pass_nr {
+                return Ok(());
+            }
+        };
+
+        let output = surface.render(&self.ctx, |ctx: &egui::Context| {
+            self.app.render(ctx);
+        })?;
+
+        // TODO: handle the output
+
+        Ok(())
     }
 
     fn on_message(&mut self, message: Box<dyn std::any::Any>) {
