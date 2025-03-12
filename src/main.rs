@@ -19,7 +19,7 @@ use tracing_subscriber::EnvFilter;
 /// Relative to whoever asks first.
 pub fn start_time() -> Instant {
     static LOCK: OnceLock<Instant> = OnceLock::new();
-    LOCK.get_or_init(|| Instant::now()).clone()
+    *LOCK.get_or_init(Instant::now)
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -37,7 +37,9 @@ async fn main() -> anyhow::Result<()> {
 
     LocalSet::new()
         .run_until(async move {
-            polymodo::run().await.unwrap();
+            let Err(e) = polymodo::run().await;
+            
+            log::error!("Error running polymodo: {e}");
         })
         .await;
 

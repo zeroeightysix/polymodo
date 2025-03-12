@@ -13,7 +13,6 @@ pub struct FuzzySearch<const C: usize, D: Sync + Send + 'static> {
     query: String,
 }
 
-///
 pub trait Row<const C: usize> {
     type Output;
 

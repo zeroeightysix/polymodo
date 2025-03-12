@@ -110,7 +110,7 @@ impl Dispatcher {
 
         let state = Dispatcher {
             surf_driver_event_sender,
-            registry_state: RegistryState::new(&globals),
+            registry_state: RegistryState::new(globals),
             seat_state,
             output_state,
             keyboard: None,
