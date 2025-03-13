@@ -5,6 +5,7 @@ use crate::windowing::WindowingError;
 use anyhow::Context;
 use egui::ViewportId;
 use rand::random;
+use smithay_client_toolkit::seat::keyboard::RepeatInfo;
 use std::cell::Cell;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
@@ -75,6 +76,7 @@ pub struct AppSurfaceDriver {
     app_surface_map: Vec<(FullSurfaceId, AppKey)>, // `find` in a vec is faster for small quantities
     surface_setup: SurfaceSetup,
     surfaces: Vec<Surface>,
+    repeat_info: Option<RepeatInfo>,
 }
 
 impl AppSurfaceDriver {
@@ -84,6 +86,7 @@ impl AppSurfaceDriver {
             app_surface_map: vec![],
             surface_setup,
             surfaces: vec![],
+            repeat_info: None,
         }
     }
 
@@ -152,6 +155,10 @@ impl AppSurfaceDriver {
             SurfaceEvent::Pointer(id, pointer_event) => {
                 let surface = self.surface_by_id(&id).context("No such surface")?;
                 surface.handle_pointer_event(&pointer_event);
+                Ok(())
+            }
+            SurfaceEvent::UpdateRepeatInfo(info) => {
+                self.repeat_info = Some(info);
                 Ok(())
             }
         }

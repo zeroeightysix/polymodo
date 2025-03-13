@@ -73,23 +73,3 @@ fn create_dispatch_task(mut client: WaylandClient) -> JoinHandle<std::convert::I
         }
     })
 }
-
-#[derive(Clone)]
-pub enum PolymodoRenderTarget {
-    Surface(Arc<Surface>),
-    Viewport(ViewportId),
-    App(AppKey),
-}
-
-// fn create_context(&self) -> egui::Context {
-//     let sender = self.sender.clone();
-//     let ctx = egui::Context::default();
-//     ctx.set_request_repaint_callback(move |info| {
-//         // TODO: delay
-//         let _ = sender.try_send(DispatcherRequest::RepaintViewport(
-//             info.viewport_id,
-//             info.current_cumulative_pass_nr,
-//         ));
-//     });
-//     ctx
-// }

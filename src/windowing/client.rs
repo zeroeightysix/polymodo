@@ -7,11 +7,14 @@ use egui_wgpu::{RenderState, WgpuSetup};
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::client::globals::GlobalList;
+use smithay_client_toolkit::reexports::client::protocol::wl_keyboard::WlKeyboard;
 use smithay_client_toolkit::reexports::client::{
     globals, protocol, Connection, EventQueue, Proxy, QueueHandle,
 };
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
-use smithay_client_toolkit::seat::keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers};
+use smithay_client_toolkit::seat::keyboard::{
+    KeyEvent, KeyboardHandler, Keysym, Modifiers, RepeatInfo,
+};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerHandler};
 use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
 use smithay_client_toolkit::shell::wlr_layer::{
@@ -149,6 +152,7 @@ pub enum SurfaceEvent {
     ReleaseKey(SurfaceId, Option<egui::Key>),
     UpdateModifiers(SurfaceId, egui::Modifiers),
     Pointer(SurfaceId, PointerEvent),
+    UpdateRepeatInfo(RepeatInfo),
 }
 
 /// All you need to create a new wayland surface with a GPU rendering context attached.
@@ -499,6 +503,16 @@ impl KeyboardHandler for Dispatcher {
                 command: false,
             },
         ));
+    }
+
+    fn update_repeat_info(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _keyboard: &WlKeyboard,
+        info: RepeatInfo,
+    ) {
+        self.push_event(SurfaceEvent::UpdateRepeatInfo(info))
     }
 }
 
