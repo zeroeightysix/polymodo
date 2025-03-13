@@ -16,6 +16,7 @@ pub struct DesktopEntry {
     pub exec: Option<String>,
     pub generic_name: Option<String>,
     pub comment: Option<String>,
+    pub icon: Option<String>,
 }
 
 impl DesktopEntry {
@@ -57,6 +58,7 @@ pub fn load(path: impl AsRef<Path>) -> anyhow::Result<DesktopEntry> {
     let generic_name = main_section.get("GenericName");
     let comment = main_section.get("Comment");
     let exec = main_section.get("Exec");
+    let icon = main_section.get("Icon");
 
     Ok(DesktopEntry {
         source_path: path.to_path_buf(),
@@ -66,6 +68,7 @@ pub fn load(path: impl AsRef<Path>) -> anyhow::Result<DesktopEntry> {
         exec: exec.map(|s| s.to_string()),
         generic_name: generic_name.map(|s| s.to_string()),
         comment: comment.map(|s| s.to_string()),
+        icon: icon.map(|s| s.to_string()),
     })
 }
 
