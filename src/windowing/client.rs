@@ -1,6 +1,6 @@
 use crate::windowing::client::SurfaceEvent::NeedsRepaintSurface;
 use crate::windowing::convert::keysym_to_key;
-use crate::windowing::surface::{LayerSurfaceOptions, Surface, SurfaceId};
+use crate::windowing::surface::{LayerSurfaceOptions, ScaleFactor, Surface, SurfaceId};
 use crate::windowing::WindowingError;
 use egui::ViewportId;
 use egui_wgpu::{RenderState, WgpuSetup};
@@ -8,9 +8,7 @@ use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::client::globals::GlobalList;
 use smithay_client_toolkit::reexports::client::protocol::wl_keyboard::WlKeyboard;
-use smithay_client_toolkit::reexports::client::{
-    globals, protocol, Connection, EventQueue, Proxy, QueueHandle,
-};
+use smithay_client_toolkit::reexports::client::{globals, protocol, Connection, Dispatch, EventQueue, Proxy, QueueHandle};
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
 use smithay_client_toolkit::seat::keyboard::{
     KeyEvent, KeyboardHandler, Keysym, Modifiers, RepeatInfo,
@@ -29,6 +27,10 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 use tokio::sync::mpsc;
 use wayland_backend::client;
+use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1;
+use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::{Event, WpFractionalScaleV1};
+use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
+use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 use wgpu::rwh::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle};
 
 pub struct WaylandClient {
@@ -66,6 +68,8 @@ impl WaylandClient {
         let compositor_state = CompositorState::bind(&self.globals, &qh).unwrap();
         let layer_shell =
             LayerShell::bind(&self.globals, &qh).map_err(|_| WindowingError::NoLayerShell)?;
+        let fractional_scale_manager = self.globals.bind::<WpFractionalScaleManagerV1, Dispatcher, ()>(&qh, 1..=1, ()).unwrap();
+        let viewporter = self.globals.bind::<WpViewporter, Dispatcher, ()>(&qh, 1..=1, ()).unwrap();
 
         // create the wgpu instance from provided setup config
         let instance = wgpu_setup.new_instance().await;
@@ -76,6 +80,8 @@ impl WaylandClient {
             instance,
             compositor_state,
             layer_shell,
+            fractional_scale_manager,
+            viewporter,
         })
     }
 
@@ -153,6 +159,7 @@ pub enum SurfaceEvent {
     ReleaseKey(SurfaceId, Option<egui::Key>),
     UpdateModifiers(SurfaceId, egui::Modifiers),
     Pointer(SurfaceId, PointerEvent),
+    Scale(SurfaceId, ScaleFactor),
     UpdateRepeatInfo(RepeatInfo),
 }
 
@@ -164,6 +171,8 @@ pub struct SurfaceSetup {
     instance: wgpu::Instance,
     compositor_state: CompositorState,
     layer_shell: LayerShell,
+    fractional_scale_manager: WpFractionalScaleManagerV1,
+    viewporter: WpViewporter,
 }
 
 impl SurfaceSetup {
@@ -182,6 +191,10 @@ impl SurfaceSetup {
         // create a new wayland surface and assign the layer_shell role
         let wl_surface = self.compositor_state.create_surface(&self.qh);
         let wl_surface_id = wl_surface.id();
+
+        let fractional_scale = self.fractional_scale_manager.get_fractional_scale(&wl_surface, &self.qh, (&wl_surface).into());
+        let viewport = self.viewporter.get_viewport(&wl_surface, &self.qh, ());
+
         let layer_surface = self
             .layer_shell
             .create_layer_surface(&self.qh, wl_surface, layer, namespace, None);
@@ -217,12 +230,15 @@ impl SurfaceSetup {
             true,
         )
         .await?;
+
         let surface = Surface::create(
             viewport_id,
             (width, height),
             layer_surface,
             wgpu_surface,
             render_state,
+            fractional_scale,
+            viewport,
         );
 
         surface.configure_surface();
@@ -236,10 +252,10 @@ impl CompositorHandler for Dispatcher {
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _surface: &protocol::wl_surface::WlSurface,
-        _new_factor: i32,
+        wl_surface: &protocol::wl_surface::WlSurface,
+        factor: i32,
     ) {
-        // TODO: does egui have a scale?
+        self.push_event(SurfaceEvent::Scale(wl_surface.into(), ScaleFactor::Scalar(factor)))
     }
 
     fn transform_changed(
@@ -530,6 +546,33 @@ impl PointerHandler for Dispatcher {
 
             self.push_event(SurfaceEvent::Pointer(wl_surface.into(), event.clone()));
         }
+    }
+}
+
+impl Dispatch<WpFractionalScaleManagerV1, ()> for Dispatcher {
+    fn event(_state: &mut Self, _proxy: &WpFractionalScaleManagerV1, _event: <WpFractionalScaleManagerV1 as Proxy>::Event, _data: &(), _conn: &Connection, _qhandle: &QueueHandle<Self>) {
+        // no events.
+    }
+}
+
+impl Dispatch<WpFractionalScaleV1, SurfaceId> for Dispatcher {
+    fn event(state: &mut Self, _proxy: &WpFractionalScaleV1, event: <WpFractionalScaleV1 as Proxy>::Event, data: &SurfaceId, _conn: &Connection, _qhandle: &QueueHandle<Self>) {
+        if let Event::PreferredScale { scale } = event {
+            let scale = scale as f32 / 120f32;
+            state.push_event(SurfaceEvent::Scale(data.clone(), ScaleFactor::Fractional(scale)))
+        }
+    }
+}
+
+impl Dispatch<WpViewporter, ()> for Dispatcher {
+    fn event(_state: &mut Self, _proxy: &WpViewporter, _event: <WpViewporter as Proxy>::Event, _data: &(), _conn: &Connection, _qhandle: &QueueHandle<Self>) {
+        // no events.
+    }
+}
+
+impl Dispatch<WpViewport, ()> for Dispatcher {
+    fn event(_state: &mut Self, _proxy: &WpViewport, _event: <WpViewport as Proxy>::Event, _data: &(), _conn: &Connection, _qhandle: &QueueHandle<Self>) {
+        // no events.
     }
 }
 

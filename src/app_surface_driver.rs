@@ -1,6 +1,6 @@
 use crate::windowing::app::App;
 use crate::windowing::client::{SurfaceEvent, SurfaceSetup};
-use crate::windowing::surface::{LayerSurfaceOptions, Surface, SurfaceId};
+use crate::windowing::surface::{LayerSurfaceOptions, ScaleFactor, Surface, SurfaceId};
 use crate::windowing::WindowingError;
 use anyhow::Context;
 use egui::ViewportId;
@@ -126,7 +126,7 @@ impl AppSurfaceDriver {
             SurfaceEvent::Configure(id, configure) => {
                 let (width, height) = configure.new_size;
                 let surface = self.surface_by_id(&id).context("No such surface")?;
-                surface.update_size(width, height);
+                surface.set_unscaled_size(width, height);
 
                 self.paint(&id, None)
             }
@@ -211,6 +211,16 @@ impl AppSurfaceDriver {
             SurfaceEvent::UpdateRepeatInfo(info) => {
                 self.repeat_info = Some(info);
                 Ok(())
+            }
+            SurfaceEvent::Scale(surface, scale) => {
+                let scale = match scale {
+                    ScaleFactor::Scalar(factor) => factor as f32,
+                    ScaleFactor::Fractional(factor) => factor,
+                };
+
+                self.with_app_surf_mut(&surface, |app, surf| {
+                    app.set_scale(scale, surf);
+                })
             }
         }
     }
@@ -342,6 +352,8 @@ pub trait AppDriver {
     fn paint(&mut self, surface: &mut Surface, pass_nr: Option<u64>) -> Result<(), WindowingError>;
 
     fn on_message(&mut self, message: Box<dyn std::any::Any>);
+    
+    fn set_scale(&mut self, scale: f32, surf: &mut Surface);
 }
 
 struct AppDriverImpl<A: App> {
@@ -391,6 +403,11 @@ where
         };
 
         self.app.on_message(*message);
+    }
+
+    fn set_scale(&mut self, scale: f32, surf: &mut Surface) {
+        self.ctx.set_zoom_factor(scale);
+        surf.set_scale(scale);
     }
 }
 

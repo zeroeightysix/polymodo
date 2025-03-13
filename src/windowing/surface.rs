@@ -8,6 +8,8 @@ use smithay_client_toolkit::seat::pointer::PointerEventKind::*;
 use smithay_client_toolkit::shell::wlr_layer::{Anchor, Layer, LayerSurface};
 use smithay_client_toolkit::shell::WaylandSurface;
 use wayland_backend::client::ObjectId;
+use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::WpFractionalScaleV1;
+use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 
 #[derive(Debug, Clone)]
 pub struct LayerSurfaceOptions<'a> {
@@ -24,10 +26,14 @@ pub struct Surface {
     // which egui viewport was this surface created for?
     viewport_id: ViewportId,
     exit: bool,
-    default_size: Option<(u32, u32)>,
+    unscaled_size: (u32, u32),
     size: (u32, u32),
+    scale: f32,
     layer_surface: LayerSurface,
     focused: bool,
+    #[expect(unused)] // we just need to hold this for the object to stay alive
+    fractional_scale: WpFractionalScaleV1,
+    viewport: WpViewport,
 
     events: Vec<egui::Event>,
     modifiers: egui::Modifiers,
@@ -43,14 +49,19 @@ impl Surface {
         layer_surface: LayerSurface,
         wgpu_surface: wgpu::Surface<'static>,
         render_state: RenderState,
+        fractional_scale: WpFractionalScaleV1,
+        viewport: WpViewport,
     ) -> Self {
         Self {
             viewport_id,
             exit: false,
-            default_size: Some(size),
+            unscaled_size: size,
             size,
+            scale: 1.0,
             layer_surface,
             focused: false,
+            fractional_scale,
+            viewport,
             events: Default::default(),
             modifiers: Default::default(),
             wgpu_surface,
@@ -142,7 +153,7 @@ impl Surface {
     }
 
     fn next_raw_input(&mut self) -> egui::RawInput {
-        let size = self.size();
+        let size = self.unscaled_size;
         let events = std::mem::take(&mut self.events);
 
         egui::RawInput {
@@ -177,17 +188,18 @@ impl Surface {
             },
         );
     }
-
-    pub fn update_size(&mut self, mut width: u32, mut height: u32) {
+    
+    pub fn set_unscaled_size(&mut self, mut width: u32, mut height: u32) {
         if width == 0 {
-            width = self.default_size.map(|(w, _)| w).unwrap_or(256);
+            width = self.unscaled_size.0;
         }
         if height == 0 {
-            height = self.default_size.map(|(_, h)| h).unwrap_or(256);
+            height = self.unscaled_size.1;
         }
-
-        self.size = (width, height);
+        self.unscaled_size = (width, height);
+        self.size = ((width as f32 * self.scale) as u32, (height as f32 * self.scale) as u32);
         self.configure_surface();
+        self.update_viewport();
     }
 
     pub fn handle_pointer_event(&mut self, event: &PointerEvent) {
@@ -238,11 +250,6 @@ impl Surface {
     }
 
     #[inline]
-    pub fn size(&self) -> (u32, u32) {
-        self.size
-    }
-
-    #[inline]
     pub fn focused(&self) -> bool {
         self.focused
     }
@@ -252,11 +259,6 @@ impl Surface {
         self.modifiers
     }
 
-    #[inline]
-    pub fn viewport_id(&self) -> ViewportId {
-        self.viewport_id
-    }
-
     pub fn set_modifiers(&mut self, modifiers: egui::Modifiers) {
         self.modifiers = modifiers;
     }
@@ -264,10 +266,22 @@ impl Surface {
     pub fn set_exit(&mut self) {
         self.exit = true;
     }
+    
+    pub fn set_scale(&mut self, scale: f32) {
+        self.scale = scale;
+        // update the size, which also updates the gpu surface and viewport
+        self.set_unscaled_size(self.unscaled_size.0, self.unscaled_size.1);
+    }
 
     pub fn on_focus(&mut self, focus: bool) {
         self.focused = focus;
         self.push_event(egui::Event::WindowFocused(focus));
+    }
+
+    fn update_viewport(&self) {
+        let (width, height) = self.unscaled_size;
+        self.viewport.set_destination(width as i32, height as i32);
+        self.layer_surface.wl_surface().commit();
     }
 
     pub fn on_key(&mut self, key: egui::Key, pressed: bool) {
@@ -297,6 +311,12 @@ impl Default for LayerSurfaceOptions<'_> {
             height: 1024,
         }
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum ScaleFactor {
+    Scalar(i32),
+    Fractional(f32),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

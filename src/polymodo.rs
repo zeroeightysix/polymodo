@@ -71,6 +71,7 @@ fn create_dispatch_task(mut client: WaylandClient) -> JoinHandle<std::convert::I
     tokio::task::spawn_blocking(move || loop {
         if let Err(e) = client.dispatch() {
             log::warn!("error dispatching: {e}");
+            std::process::exit(1);
         }
     })
 }
