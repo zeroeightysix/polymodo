@@ -501,7 +501,7 @@ impl KeyboardHandler for Dispatcher {
                 ctrl: modifiers.ctrl,
                 shift: modifiers.shift,
                 mac_cmd: false,
-                command: false,
+                command: modifiers.ctrl,
             },
         ));
     }
