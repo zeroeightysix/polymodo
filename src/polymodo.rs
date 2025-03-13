@@ -1,12 +1,9 @@
 use crate::app_surface_driver;
-use crate::app_surface_driver::{create_app_driver, new_app_key, AppEvent, AppKey};
+use crate::app_surface_driver::{create_app_driver, new_app_key, AppEvent};
 use crate::mode::launch::Launcher;
 use crate::windowing::app::{App, AppSender, AppSetup};
 use crate::windowing::client::{SurfaceEvent, WaylandClient};
-use crate::windowing::surface::Surface;
 use anyhow::Context;
-use egui::ViewportId;
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -25,8 +22,12 @@ pub async fn run() -> anyhow::Result<std::convert::Infallible> {
     // this one processes events coming from the dispatcher,
     // render requests from the dispatcher and other sources,
     // and holds app state.
-    let _surf_drive_task =
-        app_surface_driver::create_surface_driver_task(event_receive, app_receive, surface_setup);
+    let _surf_drive_task = app_surface_driver::create_surface_driver_task(
+        surf_driver_event_sender.clone(),
+        event_receive,
+        app_receive,
+        surface_setup,
+    );
 
     // set up the dispatch task which polls wayland and sends client to the surface app driver
     let dispatch_task = create_dispatch_task(client);

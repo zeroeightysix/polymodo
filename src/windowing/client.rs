@@ -149,6 +149,7 @@ pub enum SurfaceEvent {
     Configure(SurfaceId, LayerSurfaceConfigure),
     KeyboardFocus(SurfaceId, bool),
     PressKey(SurfaceId, Option<String>, Option<egui::Key>),
+    RepeatKey(SurfaceId, Option<String>, Option<egui::Key>),
     ReleaseKey(SurfaceId, Option<egui::Key>),
     UpdateModifiers(SurfaceId, egui::Modifiers),
     Pointer(SurfaceId, PointerEvent),

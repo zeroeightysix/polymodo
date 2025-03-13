@@ -8,6 +8,7 @@ use rand::random;
 use smithay_client_toolkit::seat::keyboard::RepeatInfo;
 use std::cell::Cell;
 use std::sync::Mutex;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::{AbortHandle, JoinHandle};
 
@@ -76,16 +77,21 @@ pub struct AppSurfaceDriver {
     app_surface_map: Vec<(FullSurfaceId, AppKey)>, // `find` in a vec is faster for small quantities
     surface_setup: SurfaceSetup,
     surfaces: Vec<Surface>,
+
+    self_sender: mpsc::Sender<SurfaceEvent>,
+    abort_repeat_task: Option<AbortHandle>,
     repeat_info: Option<RepeatInfo>,
 }
 
 impl AppSurfaceDriver {
-    pub fn create(surface_setup: SurfaceSetup) -> Self {
+    pub fn create(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>, surface_setup: SurfaceSetup) -> Self {
         Self {
             apps: Default::default(),
             app_surface_map: vec![],
             surface_setup,
             surfaces: vec![],
+            self_sender: surf_driver_event_sender,
+            abort_repeat_task: None,
             repeat_info: None,
         }
     }
@@ -132,6 +138,31 @@ impl AppSurfaceDriver {
             }
             SurfaceEvent::PressKey(_, None, None) => Ok(()), // no text and no key -> ignore.
             SurfaceEvent::PressKey(id, text, key) => {
+                // set up the key repetition task
+                if let Some(RepeatInfo::Repeat { rate, delay }) = self.repeat_info {
+                    let id = id.clone();
+                    let text = text.clone();
+                    let sender = self.self_sender.clone();
+
+                    let abort = tokio::spawn(async move {
+                        // wait the initial delay,
+                        tokio::time::sleep(Duration::from_millis(delay as u64)).await;
+
+                        // and then start sending a RepeatKey event every sleep_inbetween.
+                        let sleep_secs = 1f64 / rate.get() as f64;
+                        let sleep_inbetween = Duration::from_secs_f64(sleep_secs);
+
+                        loop {
+                            let _ = sender.send(SurfaceEvent::RepeatKey(id.clone(), text.clone(), key)).await;
+                            tokio::time::sleep(sleep_inbetween).await;
+                        }
+                    }).abort_handle();
+                    // replace the abort handle and abort the last one
+                    if let Some(handle) = self.abort_repeat_task.replace(abort) {
+                        handle.abort();
+                    }
+                }
+
                 let surface = self.surface_by_id(&id).context("No such surface")?;
                 if let Some(text) = text {
                     surface.push_event(egui::Event::Text(text));
@@ -141,8 +172,28 @@ impl AppSurfaceDriver {
                 }
                 Ok(())
             }
+            SurfaceEvent::RepeatKey(id, text, key) => {
+                // same as above ^^
+                let surface = self.surface_by_id(&id).context("No such surface")?;
+                if let Some(text) = text {
+                    surface.push_event(egui::Event::Text(text));
+                }
+                if let Some(key) = key {
+                    surface.on_key(key, true);
+                }
+
+                self.paint(&id, None)
+            }
             SurfaceEvent::ReleaseKey(_, None) => Ok(()), // no key -> ignore
             SurfaceEvent::ReleaseKey(id, Some(key)) => {
+                // if a key is released, stop the repetition task.
+                // we don't bother to differentiate between which key was being repeated,
+                // as this is an edge case we don't really care about and should be handled better
+                // once layer_shell is landed in
+                if let Some(abort) = self.abort_repeat_task.take() {
+                    abort.abort();
+                }
+
                 let surface = self.surface_by_id(&id).context("No such surface")?;
                 surface.on_key(key, false);
                 Ok(())
@@ -325,7 +376,7 @@ where
             }
         };
 
-        let output = surface.render(&self.ctx, |ctx: &egui::Context| {
+        let _output = surface.render(&self.ctx, |ctx: &egui::Context| {
             self.app.render(ctx);
         })?;
 
@@ -344,12 +395,13 @@ where
 }
 
 pub fn create_surface_driver_task(
+    surf_driver_event_sender: mpsc::Sender<SurfaceEvent>,
     mut event_receive: mpsc::Receiver<SurfaceEvent>,
     mut app_receive: local_channel::mpsc::Receiver<AppEvent>,
     surface_setup: SurfaceSetup,
 ) -> JoinHandle<std::convert::Infallible> {
     tokio::task::spawn_local(async move {
-        let mut driver = AppSurfaceDriver::create(surface_setup);
+        let mut driver = AppSurfaceDriver::create(surf_driver_event_sender, surface_setup);
 
         fn die_horrific_death() -> ! {
             log::error!("surface driver task channel has closed: that's quite bad!");

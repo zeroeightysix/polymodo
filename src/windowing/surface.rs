@@ -3,7 +3,6 @@ use crate::windowing::{convert, WindowingError};
 use egui::{Context, Rect, ViewportId};
 use egui_wgpu::{RenderState, ScreenDescriptor, WgpuConfiguration};
 use smithay_client_toolkit::reexports::client::{protocol, Proxy};
-use smithay_client_toolkit::seat::keyboard::RepeatInfo;
 use smithay_client_toolkit::seat::pointer::PointerEvent;
 use smithay_client_toolkit::seat::pointer::PointerEventKind::*;
 use smithay_client_toolkit::shell::wlr_layer::{Anchor, Layer, LayerSurface};
