@@ -70,58 +70,7 @@ impl Launcher {
         {
             let entry = self.show_entries.get(self.selected_entry_idx);
             if let Some(entry) = entry.map(|e| e.0) {
-                if let Some(exec) = &entry.exec {
-                    match fork::fork() {
-                        Ok(fork::Fork::Child) => {
-                            // detach
-                            if let Err(e) = fork::setsid() {
-                                log::error!("setsid failed: {}", e);
-                            }
-                            if let Err(e) = chdir() {
-                                log::error!("chdir failed: {}", e);
-                            }
-
-                            // %f and %F: lists of files. polymodo does not yet support selecting files.
-                            let exec = exec.replace("%f", "").replace("%F", "");
-                            // same story for %u and %U:
-                            let exec = exec.replace("%u", "").replace("%U", "");
-
-                            // split exec by spaces
-                            let mut args = exec
-                                .split(" ")
-                                .flat_map(|arg| match arg {
-                                    "%i" => vec!["--icon", entry.icon.as_deref().unwrap_or("")],
-                                    "%c" => vec![entry.name.as_str()],
-                                    "%k" => {
-                                        vec![entry.source_path.as_os_str().to_str().unwrap_or("")]
-                                    }
-                                    _ => vec![arg],
-                                })
-                                .collect::<Vec<_>>();
-                            // the first "argument" is the program to launch
-                            let program = args.remove(0);
-
-                            log::debug!("launching: prog='{}' args='{}'", program, args.join(" "));
-
-                            let error = Command::new(program).args(args).exec(); // this will never return if the exec succeeds
-
-                            // but if it did return, log the error and return:
-                            log::error!("failed to launch: {}", error);
-                            let _ = std::io::stdout().flush();
-                            std::process::exit(-1);
-                        }
-                        Ok(fork::Fork::Parent(pid)) => {
-                            log::info!("Launching {:?} with pid {pid}", entry.name.as_str());
-                            let _ = std::io::stdout().flush();
-                            std::process::exit(0);
-                        }
-                        Err(e) => {
-                            log::error!("Fork failed: {}", e);
-                            let _ = std::io::stdout().flush();
-                            std::process::exit(-1);
-                        }
-                    }
-                }
+                launch(&entry);
             }
         }
 
@@ -204,6 +153,64 @@ impl App for Launcher {
         }
     }
 }
+
+fn launch(entry: &DesktopEntry) {
+    let Some(exec) = &entry.exec else {
+        return;
+    };
+
+    match fork::fork() {
+        Ok(fork::Fork::Child) => {
+            // detach
+            if let Err(e) = fork::setsid() {
+                log::error!("setsid failed: {}", e);
+            }
+            if let Err(e) = chdir() {
+                log::error!("chdir failed: {}", e);
+            }
+
+            // %f and %F: lists of files. polymodo does not yet support selecting files.
+            let exec = exec.replace("%f", "").replace("%F", "");
+            // same story for %u and %U:
+            let exec = exec.replace("%u", "").replace("%U", "");
+
+            // split exec by spaces
+            let mut args = exec
+                .split(" ")
+                .flat_map(|arg| match arg {
+                    "%i" => vec!["--icon", entry.icon.as_deref().unwrap_or("")],
+                    "%c" => vec![entry.name.as_str()],
+                    "%k" => {
+                        vec![entry.source_path.as_os_str().to_str().unwrap_or("")]
+                    }
+                    _ => vec![arg],
+                })
+                .collect::<Vec<_>>();
+            // the first "argument" is the program to launch
+            let program = args.remove(0);
+
+            log::debug!("launching: prog='{}' args='{}'", program, args.join(" "));
+
+            let error = Command::new(program).args(args).exec(); // this will never return if the exec succeeds
+
+            // but if it did return, log the error and return:
+            log::error!("failed to launch: {}", error);
+            let _ = std::io::stdout().flush();
+            std::process::exit(-1);
+        }
+        Ok(fork::Fork::Parent(pid)) => {
+            log::info!("Launching {:?} with pid {pid}", entry.name.as_str());
+            let _ = std::io::stdout().flush();
+            std::process::exit(0);
+        }
+        Err(e) => {
+            log::error!("Fork failed: {}", e);
+            let _ = std::io::stdout().flush();
+            std::process::exit(-1);
+        }
+    }
+}
+
 
 fn chdir() -> std::io::Result<()> {
     let home = home::home_dir().unwrap_or(PathBuf::from("/"));
