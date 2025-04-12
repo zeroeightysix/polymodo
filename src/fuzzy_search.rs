@@ -98,21 +98,32 @@ where
     D: Row<C>,
     D::Output: Into<nucleo::Utf32String>,
 {
+    fn push_into(injector: &nucleo::Injector<D>, entry: D) -> u32 {
+        injector.push(entry, |entry: &D, col: &mut [nucleo::Utf32String]| {
+            // for this entry, get the column values from its Row implementation
+            let strings = entry.columns();
+            // turn them into nucleo::Utf32String
+            // (Into impl comes from trait bound on D)
+            // --
+            // technically we already have the heap-allocations of Utf32String in `col` at this point,
+            // so it coooouuulld be more efficient to fill & grow those instead,
+            // but who cares?
+            let mut strings = strings.map(|output| output.into());
+            col.swap_with_slice(&mut strings);
+        })
+    }
+
+    /// Returns a function that may be called to push items into the fuzzy matcher.
+    /// This exists as a simple handle that can be given to an async task, instead of
+    /// requiring shared ownership of the [FuzzySearch]
+    pub fn pusher(&self) -> impl Fn(D) + Send + Sync {
+        let injector = self.injector.clone();
+        move |entry: D| { Self::push_into(&injector, entry); }
+    }
+
     /// Add an entry to the matcher.
     pub fn push(&self, entry: D) {
-        self.injector
-            .push(entry, |entry: &D, col: &mut [nucleo::Utf32String]| {
-                // for this entry, get the column values from its Row implementation
-                let strings = entry.columns();
-                // turn them into nucleo::Utf32String
-                // (Into impl comes from trait bound on D)
-                // --
-                // technically we already have the heap-allocations of Utf32String in `col` at this point,
-                // so it coooouuulld be more efficient to fill & grow those instead,
-                // but who cares?
-                let mut strings = strings.map(|output| output.into());
-                col.swap_with_slice(&mut strings);
-            });
+        Self::push_into(&self.injector, entry);
     }
 
     /// Add a bunch of entries to the matcher.

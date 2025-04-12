@@ -99,12 +99,17 @@ impl App for Launcher {
     type Output = ();
 
     fn create(message_sender: AppSender<Self::Message>) -> AppSetup<Self, Self::Output> {
-        let desktop_entries: Vec<_> = desktop_entries().to_vec();
-
         let mut config = nucleo::Config::DEFAULT;
         config.prefer_prefix = true;
         let search = FuzzySearch::create_with_config(config);
-        search.push_all(desktop_entries);
+        let pusher = search.pusher();
+
+        tokio::task::spawn_blocking(move || {
+            let desktop_entries: Vec<_> = desktop_entries().to_vec();
+            for entry in desktop_entries {
+                pusher(entry);
+            }
+        });
 
         let launcher = Launcher {
             search_input: String::new(),
