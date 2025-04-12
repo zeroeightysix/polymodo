@@ -4,6 +4,7 @@ use crate::windowing::surface::LayerSurfaceOptions;
 use crate::xdg::DesktopEntry;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 
@@ -73,29 +74,34 @@ impl Launcher {
                     match fork::fork() {
                         Ok(fork::Fork::Child) => {
                             // detach
-                            fork::setsid().unwrap();
-                            let _ = fork::chdir();
+                            if let Err(e) = fork::setsid() {
+                                log::error!("setsid failed: {}", e);
+                            }
+                            if let Err(e) = chdir() {
+                                log::error!("chdir failed: {}", e);
+                            }
 
                             // %f and %F: lists of files. polymodo does not yet support selecting files.
-                            let exec = exec.replace("%f", "")
-                                .replace("%F", "");
+                            let exec = exec.replace("%f", "").replace("%F", "");
                             // same story for %u and %U:
-                            let exec = exec.replace("%u", "")
-                                .replace("%U", "");
+                            let exec = exec.replace("%u", "").replace("%U", "");
 
                             // split exec by spaces
-                            let mut args = exec.split(" ")
+                            let mut args = exec
+                                .split(" ")
                                 .flat_map(|arg| match arg {
                                     "%i" => vec!["--icon", entry.icon.as_deref().unwrap_or("")],
                                     "%c" => vec![entry.name.as_str()],
-                                    "%k" => vec![entry.source_path.as_os_str().to_str().unwrap_or("")],
-                                    _ => vec![arg]
+                                    "%k" => {
+                                        vec![entry.source_path.as_os_str().to_str().unwrap_or("")]
+                                    }
+                                    _ => vec![arg],
                                 })
                                 .collect::<Vec<_>>();
                             // the first "argument" is the program to launch
                             let program = args.remove(0);
 
-                            log::debug!("launching: {} {}", program, args.join(" "));
+                            log::debug!("launching: prog='{}' args='{}'", program, args.join(" "));
 
                             let error = Command::new(program).args(args).exec(); // this will never return if the exec succeeds
 
@@ -105,7 +111,7 @@ impl Launcher {
                             std::process::exit(-1);
                         }
                         Ok(fork::Fork::Parent(pid)) => {
-                            log::info!("Launched {:?} with pid {pid}", entry.name.as_str());
+                            log::info!("Launching {:?} with pid {pid}", entry.name.as_str());
                             let _ = std::io::stdout().flush();
                             std::process::exit(0);
                         }
@@ -197,6 +203,11 @@ impl App for Launcher {
             std::process::exit(0);
         }
     }
+}
+
+fn chdir() -> std::io::Result<()> {
+    let home = home::home_dir().unwrap_or(PathBuf::from("/"));
+    std::env::set_current_dir(&home)
 }
 
 #[derive(Debug, Clone)]
