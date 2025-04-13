@@ -216,6 +216,9 @@ fn launch(entry: &DesktopEntry) {
                     "%k" => {
                         vec![entry.source_path.as_os_str().to_str().unwrap_or("")]
                     }
+                    // remove empty strings as arguments; these may be left over from
+                    //   trailing/subsequent whitespaces, and cause programs to misbehave.
+                    "" => { vec![] },
                     _ => vec![arg],
                 })
                 .collect::<Vec<_>>();
