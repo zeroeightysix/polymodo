@@ -284,13 +284,13 @@ impl Surface {
         self.layer_surface.wl_surface().commit();
     }
 
-    pub fn on_key(&mut self, key: egui::Key, pressed: bool) {
+    pub fn on_key(&mut self, key: egui::Key, pressed: bool, repeat: bool) {
         self.push_event(egui::Event::Key {
             key,
             physical_key: None,
             pressed,
             modifiers: self.modifiers(),
-            repeat: false,
+            repeat,
         });
     }
 

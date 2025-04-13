@@ -168,7 +168,7 @@ impl AppSurfaceDriver {
                     surface.push_event(egui::Event::Text(text));
                 }
                 if let Some(key) = key {
-                    surface.on_key(key, true);
+                    surface.on_key(key, true, false);
                 }
                 Ok(())
             }
@@ -179,7 +179,7 @@ impl AppSurfaceDriver {
                     surface.push_event(egui::Event::Text(text));
                 }
                 if let Some(key) = key {
-                    surface.on_key(key, true);
+                    surface.on_key(key, true, true);
                 }
 
                 self.paint(&id, None)
@@ -195,7 +195,7 @@ impl AppSurfaceDriver {
                 }
 
                 let surface = self.surface_by_id(&id).context("No such surface")?;
-                surface.on_key(key, false);
+                surface.on_key(key, false, false);
                 Ok(())
             }
             SurfaceEvent::UpdateModifiers(id, modifiers) => {
