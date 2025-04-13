@@ -184,15 +184,17 @@ impl AppSurfaceDriver {
 
                 self.paint(&id, None)
             }
-            SurfaceEvent::ReleaseKey(_, None) => Ok(()), // no key -> ignore
+            SurfaceEvent::ReleaseKey(_, None) => { // no key -> ignore
+                self.cancel_repetition_task(); // but do cancel the repetition task
+
+                Ok(())
+            },
             SurfaceEvent::ReleaseKey(id, Some(key)) => {
                 // if a key is released, stop the repetition task.
                 // we don't bother to differentiate between which key was being repeated,
                 // as this is an edge case we don't really care about and should be handled better
                 // once layer_shell is landed in
-                if let Some(abort) = self.abort_repeat_task.take() {
-                    abort.abort();
-                }
+                self.cancel_repetition_task();
 
                 let surface = self.surface_by_id(&id).context("No such surface")?;
                 surface.on_key(key, false, false);
@@ -222,6 +224,12 @@ impl AppSurfaceDriver {
                     app.set_scale(scale, surf);
                 })
             }
+        }
+    }
+
+    fn cancel_repetition_task(&mut self) {
+        if let Some(abort) = self.abort_repeat_task.take() {
+            abort.abort();
         }
     }
 
