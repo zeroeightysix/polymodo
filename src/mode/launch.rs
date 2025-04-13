@@ -7,6 +7,9 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
+use egui::{Align, Color32, Pos2, Rect, RichText, Vec2};
+use egui::style::ScrollAnimation;
+use egui_extras::{Column, TableBuilder};
 
 fn desktop_entries() -> &'static Vec<SearchRow> {
     static DESKTOP_ENTRIES: OnceLock<Vec<SearchRow>> = OnceLock::new();
@@ -45,15 +48,25 @@ impl Launcher {
             response.request_focus();
         }
 
-        if response.has_focus() {
+        let scroll = if response.has_focus() {
             // if up/down has been pressed, adjust the selected entry
             if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
                 self.selected_entry_idx = (self.selected_entry_idx + 1) % self.show_entries.len();
+
+                true
             } else if ui.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
                 self.selected_entry_idx =
                     (self.selected_entry_idx.saturating_sub(1)) % self.show_entries.len();
+
+                true
+            } else {
+                // the selected entry didn't change, so we shouldn't scroll to its row.
+                false
             }
-        }
+        } else {
+            false
+        };
+
         // if the text input has changed,
         if response.changed() {
             // make a new search.
@@ -74,23 +87,39 @@ impl Launcher {
             }
         }
 
-        let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
-        egui::ScrollArea::vertical().auto_shrink(false).show_rows(
-            ui,
-            row_height,
-            self.show_entries.len(),
-            |ui, rows| {
-                for row in rows {
-                    let entry = self.show_entries[row];
-                    if ui
-                        .selectable_label(self.selected_entry_idx == row, entry.name())
-                        .clicked()
-                    {
-                        self.selected_entry_idx = row;
+        let remainder = ui.available_height();
+        let row_height = ui.text_style_height(&egui::TextStyle::Body);
+
+        let mut table = TableBuilder::new(ui)
+            .column(Column::remainder())
+            .animate_scrolling(false)
+            .min_scrolled_height(remainder);
+        if scroll {
+            table = table.scroll_to_row(self.selected_entry_idx, None);
+        }
+        table.body(|body| {
+            body.rows(row_height, self.show_entries.len(), |mut row| {
+                let idx = row.index();
+                let entry = self.show_entries[idx];
+                let checked = self.selected_entry_idx == idx;
+                row.col(|ui| {
+                    let mut text = RichText::new(entry.name());
+                    if checked {
+                        text = text.strong();
                     }
-                }
-            },
-        );
+
+
+                    let label = ui.label(text);
+                    if label.clicked()
+                    {
+                        self.selected_entry_idx = idx;
+                    }
+                    if label.hovered() {
+                        label.highlight();
+                    }
+                });
+            })
+        });
     }
 }
 
