@@ -127,6 +127,7 @@ where
     }
 
     /// Add a bunch of entries to the matcher.
+    #[expect(unused)]
     pub fn push_all(&self, iter: impl IntoIterator<Item = D>) {
         iter.into_iter().for_each(|i| self.push(i))
     }

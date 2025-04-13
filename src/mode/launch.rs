@@ -7,8 +7,7 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
-use egui::{Align, Color32, Pos2, Rect, RichText, Vec2};
-use egui::style::ScrollAnimation;
+use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 
 fn desktop_entries() -> &'static Vec<SearchRow> {
