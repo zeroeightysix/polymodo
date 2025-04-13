@@ -47,23 +47,25 @@ impl Launcher {
             response.request_focus();
         }
 
-        let scroll = if response.has_focus() {
+        let scroll = {
             // if up/down has been pressed, adjust the selected entry
             if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
                 self.selected_entry_idx = (self.selected_entry_idx + 1) % self.show_entries.len();
 
                 true
             } else if ui.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
-                self.selected_entry_idx =
-                    (self.selected_entry_idx.saturating_sub(1)) % self.show_entries.len();
+                if self.selected_entry_idx == 0 {
+                    self.selected_entry_idx = self.show_entries.len() - 1;
+                } else {
+                    self.selected_entry_idx =
+                        (self.selected_entry_idx.saturating_sub(1)) % self.show_entries.len();
+                }
 
                 true
             } else {
                 // the selected entry didn't change, so we shouldn't scroll to its row.
                 false
             }
-        } else {
-            false
         };
 
         // if the text input has changed,
@@ -106,7 +108,6 @@ impl Launcher {
                     if checked {
                         text = text.strong();
                     }
-
 
                     let label = ui.label(text);
                     if label.clicked()
