@@ -34,7 +34,12 @@ where
 
 fn new_context(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> egui::Context {
     let context = egui::Context::default();
-    let last_task: Mutex<Option<AbortHandle>> = Default::default();
+    // the previous repaint task, if any.
+    // note that this uses LiveHandle, meaning that if the `Context` is dropped, it drops the callback,
+    // which drops this mutex, which drops the LiveHandle, which aborts the task!
+    // this is especially useful as it prevents us from sending a `NeedsRepaintViewport` event for
+    // a surface that has since been destroyed.
+    let last_task: Mutex<Option<LiveHandle>> = Default::default();
 
     // set up the repaint callback.
     // egui will let us know when a repaint is required, optionally with a delay.
@@ -51,7 +56,7 @@ fn new_context(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> egui::Co
                 info.current_cumulative_pass_nr,
             ));
         })
-        .abort_handle();
+        .into();
 
         // because we can safely abort the last one, and store the current (new) task as the last one.
         if let Some(handle) = last_task.lock().unwrap().replace(abort_handle) {

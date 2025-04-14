@@ -5,6 +5,7 @@ mod mode;
 mod polymodo;
 mod windowing;
 mod xdg;
+mod live_handle;
 
 use std::sync::OnceLock;
 use std::time::Instant;
