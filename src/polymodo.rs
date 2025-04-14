@@ -21,7 +21,8 @@ impl Polymodo {
         // create a new key for this app.
         // (it's just a number)
         let key = new_app_key();
-        let send = AppSender::new(key, self.surf_driver_app_sender.clone());
+        let surf_driver_app_sender = self.surf_driver_app_sender.clone();
+        let send = AppSender::new(key, surf_driver_app_sender.clone());
         let AppSetup { app, mut effects } = A::create(send);
         let driver = create_app_driver(key, app, self.surf_driver_event_sender.clone());
 
@@ -34,7 +35,18 @@ impl Polymodo {
             .context("Failed to spawn launcher app")?;
 
         Ok(tokio::task::spawn_local(async move {
-            effects.join_next().await.unwrap().unwrap() // TODO: we need an abstraction on AppSetup to guarantee an effect
+            let output = effects.join_next().await.unwrap().unwrap(); // TODO: we need an abstraction on AppSetup to guarantee an effect
+
+            // the app has finished, so we must remove it now.
+            if let Err(e) = surf_driver_app_sender.send(AppEvent::DestroyApp {
+                app_key: key
+            }) {
+                log::error!("failed to send destruction event to `surf_driver_app_sender`: that's pretty bad");
+                log::error!("{e:?}");
+            }
+
+            output
+            // TODO: handle output
         }))
     }
 
@@ -76,7 +88,6 @@ pub async fn run() -> anyhow::Result<std::convert::Infallible> {
     // we could join and wait on them here, but either will never finish.. so we just pick one:
     Ok(dispatch_task.await?)
 }
-
 
 fn create_dispatch_task(mut client: WaylandClient) -> JoinHandle<std::convert::Infallible> {
     tokio::task::spawn_blocking(move || loop {

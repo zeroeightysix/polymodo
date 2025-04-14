@@ -145,6 +145,7 @@ impl Dispatcher {
     }
 }
 
+#[derive(Debug)]
 pub enum SurfaceEvent {
     UpdateAllWithEvents,
     NeedsRepaintSurface(SurfaceId),

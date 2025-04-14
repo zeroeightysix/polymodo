@@ -2,13 +2,14 @@ use crate::fuzzy_search::{FuzzySearch, Row};
 use crate::windowing::app::{App, AppSender, AppSetup};
 use crate::windowing::surface::LayerSurfaceOptions;
 use crate::xdg::DesktopEntry;
+use anyhow::{anyhow, bail};
+use egui::RichText;
+use egui_extras::{Column, TableBuilder};
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
-use egui::RichText;
-use egui_extras::{Column, TableBuilder};
 
 fn desktop_entries() -> &'static Vec<SearchRow> {
     static DESKTOP_ENTRIES: OnceLock<Vec<SearchRow>> = OnceLock::new();
@@ -26,6 +27,7 @@ pub struct Launcher {
     search: FuzzySearch<1, SearchRow>,
     show_entries: Vec<SearchRow>,
     selected_entry_idx: usize,
+    finish: Option<tokio::sync::oneshot::Sender<<Self as App>::Output>>,
 }
 
 impl Launcher {
@@ -84,7 +86,11 @@ impl Launcher {
         {
             let entry = self.show_entries.get(self.selected_entry_idx);
             if let Some(entry) = entry.map(|e| e.0) {
-                launch(&entry);
+                if let Err(e) = launch(&entry) {
+                    log::error!("failed to launch with error {e}");
+                }
+
+                self.finish();
             }
         }
 
@@ -110,8 +116,7 @@ impl Launcher {
                     }
 
                     let label = ui.label(text);
-                    if label.clicked()
-                    {
+                    if label.clicked() {
                         self.selected_entry_idx = idx;
                     }
                     if label.hovered() {
@@ -121,17 +126,30 @@ impl Launcher {
             })
         });
     }
+
+    fn finish(&mut self) {
+        if let Some(finish) = self.finish.take() {
+            // this cannot reasonably ever fail;
+            // that'd mean the `AppSetup`'s effects have been dropped,
+            // as the receiving end of the finish sender is held there.
+            let _ = finish.send(Ok(()));
+        } else {
+            log::warn!("tried to finish App, but such a message was already sent")
+        }
+    }
 }
 
 impl App for Launcher {
     type Message = Message;
-    type Output = ();
+    type Output = anyhow::Result<()>;
 
     fn create(message_sender: AppSender<Self::Message>) -> AppSetup<Self, Self::Output> {
         let mut config = nucleo::Config::DEFAULT;
         config.prefer_prefix = true;
         let search = FuzzySearch::create_with_config(config);
         let pusher = search.pusher();
+
+        let (finish, finish_recv) = tokio::sync::oneshot::channel();
 
         tokio::task::spawn_blocking(move || {
             let desktop_entries: Vec<_> = desktop_entries().to_vec();
@@ -147,6 +165,7 @@ impl App for Launcher {
             search,
             show_entries: Vec::new(),
             selected_entry_idx: 0,
+            finish: Some(finish),
         };
 
         let notify = launcher.search.notify();
@@ -159,6 +178,14 @@ impl App for Launcher {
 
                     message_sender.send(Message::Search).unwrap()
                 }
+            })
+            // output effect
+            .spawn_local(async move {
+                let result = finish_recv.await?;
+
+                log::info!("finish! {result:?}");
+
+                result
             })
     }
 
@@ -181,20 +208,20 @@ impl App for Launcher {
                 self.app_launcher_ui(ui);
             });
 
-        // Kill when escape is pressed
+        // Exit when escape is pressed
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            std::process::exit(0);
+            self.finish();
         }
     }
 }
 
-fn launch(entry: &DesktopEntry) {
+fn launch(entry: &DesktopEntry) -> anyhow::Result<()> {
     let Some(exec) = &entry.exec else {
-        return;
+        bail!("entry does not have an `Exec` key");
     };
 
-    match fork::fork() {
-        Ok(fork::Fork::Child) => {
+    match fork::fork().map_err(|_| anyhow!("failed to fork process"))? {
+        fork::Fork::Child => {
             // detach
             if let Err(e) = fork::setsid() {
                 log::error!("setsid failed: {}", e);
@@ -219,7 +246,9 @@ fn launch(entry: &DesktopEntry) {
                     }
                     // remove empty strings as arguments; these may be left over from
                     //   trailing/subsequent whitespaces, and cause programs to misbehave.
-                    "" => { vec![] },
+                    "" => {
+                        vec![]
+                    }
                     _ => vec![arg],
                 })
                 .collect::<Vec<_>>();
@@ -235,19 +264,13 @@ fn launch(entry: &DesktopEntry) {
             let _ = std::io::stdout().flush();
             std::process::exit(-1);
         }
-        Ok(fork::Fork::Parent(pid)) => {
+        fork::Fork::Parent(pid) => {
             log::info!("Launching {:?} with pid {pid}", entry.name.as_str());
             let _ = std::io::stdout().flush();
-            std::process::exit(0);
-        }
-        Err(e) => {
-            log::error!("Fork failed: {}", e);
-            let _ = std::io::stdout().flush();
-            std::process::exit(-1);
+            Ok(())
         }
     }
 }
-
 
 fn chdir() -> std::io::Result<()> {
     let home = home::home_dir().unwrap_or(PathBuf::from("/"));

@@ -1,3 +1,4 @@
+use crate::live_handle::LiveHandle;
 use crate::windowing::app::App;
 use crate::windowing::client::{SurfaceEvent, SurfaceSetup};
 use crate::windowing::surface::{LayerSurfaceOptions, ScaleFactor, Surface, SurfaceId};
@@ -5,6 +6,7 @@ use crate::windowing::WindowingError;
 use anyhow::Context;
 use egui::ViewportId;
 use rand::random;
+use smallvec::{smallvec, SmallVec};
 use smithay_client_toolkit::seat::keyboard::RepeatInfo;
 use std::cell::Cell;
 use std::sync::Mutex;
@@ -84,7 +86,10 @@ pub struct AppSurfaceDriver {
 }
 
 impl AppSurfaceDriver {
-    pub fn create(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>, surface_setup: SurfaceSetup) -> Self {
+    pub fn create(
+        surf_driver_event_sender: mpsc::Sender<SurfaceEvent>,
+        surface_setup: SurfaceSetup,
+    ) -> Self {
         Self {
             apps: Default::default(),
             app_surface_map: vec![],
@@ -119,6 +124,8 @@ impl AppSurfaceDriver {
                 Ok(())
             }
             SurfaceEvent::Closed(id) => {
+                log::debug!("surface {id:?} closed");
+
                 let surface = self.surface_by_id(&id).context("No such surface")?;
                 surface.set_exit();
                 Ok(())
@@ -153,10 +160,13 @@ impl AppSurfaceDriver {
                         let sleep_inbetween = Duration::from_secs_f64(sleep_secs);
 
                         loop {
-                            let _ = sender.send(SurfaceEvent::RepeatKey(id.clone(), text.clone(), key)).await;
+                            let _ = sender
+                                .send(SurfaceEvent::RepeatKey(id.clone(), text.clone(), key))
+                                .await;
                             tokio::time::sleep(sleep_inbetween).await;
                         }
-                    }).abort_handle();
+                    })
+                    .abort_handle();
                     // replace the abort handle and abort the last one
                     if let Some(handle) = self.abort_repeat_task.replace(abort) {
                         handle.abort();
@@ -184,11 +194,12 @@ impl AppSurfaceDriver {
 
                 self.paint(&id, None)
             }
-            SurfaceEvent::ReleaseKey(_, None) => { // no key -> ignore
+            SurfaceEvent::ReleaseKey(_, None) => {
+                // no key -> ignore
                 self.cancel_repetition_task(); // but do cancel the repetition task
 
                 Ok(())
-            },
+            }
             SurfaceEvent::ReleaseKey(id, Some(key)) => {
                 // if a key is released, stop the repetition task.
                 // we don't bother to differentiate between which key was being repeated,
@@ -233,6 +244,13 @@ impl AppSurfaceDriver {
         }
     }
 
+    /// Add an app.
+    ///
+    /// This
+    /// - creates the app's initial surface, which is assigned the ROOT viewport id.
+    /// - adds that surface to `surfaces`
+    /// - adds a mapping for that surface to `app_surface_map`
+    /// - adds the driver to `apps`
     async fn add_app(
         &mut self,
         app_driver: Box<dyn AppDriver>,
@@ -256,6 +274,50 @@ impl AppSurfaceDriver {
         self.apps.push(app_driver);
 
         Ok(())
+    }
+
+    fn remove_app(&mut self, app_key_to_remove: AppKey) {
+        // start by collecting the surfaces for this app.
+        // we need to be careful that, for each surface removed, we
+        // - remove it from `surfaces`, `app_surface_map`, and destroy the surface properly.
+        let mut associated_surfaces: SmallVec<[SurfaceId; 1]> = smallvec![];
+        self.app_surface_map.retain(|(fid, app_key)| {
+            if *app_key == app_key_to_remove {
+                associated_surfaces.push(fid.surface_id.clone());
+                // this surface is going to be removed, so do not retain the entry.
+                false
+            } else {
+                // retain this entry.
+                true
+            }
+        });
+
+        self.surfaces.retain(|surf| {
+            if associated_surfaces.contains(&surf.surface_id()) {
+                // drop this surface, which should clean it up.
+                false
+            } else {
+                // do not remove this surface.
+                true
+            }
+        });
+
+        self.apps.retain(|driver| {
+            if driver.key() == app_key_to_remove {
+                // this is the driver for the to-remove app: do not keep it.
+                false
+            } else {
+                // this is another driver, which must be retained.
+                true
+            }
+        });
+
+        // hack: finally, it is quite likely that the current repeat task was
+        // bound to the just-destroyed surface. we'll have to abort it, otherwise it will keep
+        // sending key repeat events for a surface that doesn't exist anymore!
+        if let Some(abort) = self.abort_repeat_task.take() {
+            abort.abort();
+        }
     }
 
     fn on_app_message(
@@ -360,7 +422,7 @@ pub trait AppDriver {
     fn paint(&mut self, surface: &mut Surface, pass_nr: Option<u64>) -> Result<(), WindowingError>;
 
     fn on_message(&mut self, message: Box<dyn std::any::Any>);
-    
+
     fn set_scale(&mut self, scale: f32, surf: &mut Surface);
 }
 
@@ -457,6 +519,9 @@ pub fn create_surface_driver_task(
                         log::error!("failed to spawn the surface for app {app_key}; it will probably stay alive forever (this is a leak): {e}");
                     }
                 }
+                AppEvent::DestroyApp { app_key } => {
+                    driver.remove_app(app_key);
+                }
                 AppEvent::AppMessage { app_key, message } => {
                     if driver.on_app_message(app_key, message).is_err() {
                         log::error!("could not deliver message to app {app_key}; this is a bug.");
@@ -492,6 +557,8 @@ pub enum AppEvent {
         app_driver: Box<dyn AppDriver>,
         layer_surface_options: LayerSurfaceOptions<'static>,
     },
+    /// An app has finished and should be removed.
+    DestroyApp { app_key: AppKey },
     /// An App sent a message to itself, which necessitates an `on_message` call from the driver
     AppMessage {
         app_key: AppKey,
