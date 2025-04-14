@@ -7,7 +7,6 @@ use egui_wgpu::{RenderState, WgpuSetup};
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::client::globals::GlobalList;
-use smithay_client_toolkit::reexports::client::protocol::wl_keyboard::WlKeyboard;
 use smithay_client_toolkit::reexports::client::{
     globals, protocol, Connection, Dispatch, EventQueue, Proxy, QueueHandle,
 };
@@ -437,8 +436,10 @@ impl KeyboardHandler for Dispatcher {
 
         self.push_event(SurfaceEvent::KeyboardFocus(wl_surface.into(), true));
 
-        if self.keyboard_entered_surface.is_some() {
-            log::warn!("keyboard enter event with an already entered keyboard surface");
+        if let Some(surface) = &self.keyboard_entered_surface {
+            if surface.is_alive() {
+                log::warn!("keyboard enter event with an already entered keyboard surface");
+            }
         }
 
         self.keyboard_entered_surface = Some(wl_surface.clone());
@@ -544,7 +545,7 @@ impl KeyboardHandler for Dispatcher {
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _keyboard: &WlKeyboard,
+        _keyboard: &protocol::wl_keyboard::WlKeyboard,
         info: RepeatInfo,
     ) {
         self.push_event(SurfaceEvent::UpdateRepeatInfo(info))
