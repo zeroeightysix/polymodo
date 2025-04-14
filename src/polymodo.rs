@@ -110,10 +110,7 @@ fn create_server_task(
 }
 
 /// Given an [IpcClient], perform the read loop, serving any requests made by the client.
-async fn serve_client(
-    polymodo: Rc<Polymodo>,
-    client: IpcS2C,
-) {
+async fn serve_client(polymodo: Rc<Polymodo>, client: IpcS2C) {
     loop {
         let message = match client.recv().await {
             Err(crate::ipc::IpcReceiveError::DecodeError(e)) => {
@@ -130,11 +127,7 @@ async fn serve_client(
         };
 
         let _ = match message {
-            ServerboundMessage::Ping => {
-                client
-                    .send(ClientboundMessage::Pong)
-                    .await
-            }
+            ServerboundMessage::Ping => client.send(ClientboundMessage::Pong).await,
             ServerboundMessage::Spawn(AppDescription::Launcher) => {
                 let result = polymodo.spawn_app::<Launcher>();
                 let client = client.clone();

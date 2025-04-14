@@ -31,5 +31,4 @@ rand = "0.9.0"
 local-channel = "0.1.5"
 home = "0.5.11"
 egui_extras = "0.31.1"
-interprocess = { version = "2.2.3", features = ["tokio"] }
 bincode = "2.0.1"

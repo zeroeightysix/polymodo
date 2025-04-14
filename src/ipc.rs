@@ -1,17 +1,13 @@
 use bincode::error::DecodeError;
 use bincode::{Decode, Encode};
 use derive_more::{Display, Error, From};
-use interprocess::local_socket::tokio::{prelude::*, Listener, RecvHalf, SendHalf, Stream};
-use interprocess::local_socket::{
-    GenericFilePath, GenericNamespaced, ListenerNonblockingMode, ListenerOptions, Name, NameType,
-    ToFsName, ToNsName,
-};
-use std::path::PathBuf;
+use std::os::unix::net::SocketAddr;
 use std::rc::Rc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Mutex;
 
-const POLYMODO_SOCK_PATH: &'static str = "/tmp/polymodo.sock";
 const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
 pub type IpcC2S = IpcClient<ClientboundMessage, ServerboundMessage>;
@@ -20,7 +16,7 @@ pub type IpcS2C = IpcClient<ServerboundMessage, ClientboundMessage>;
 #[derive(Debug, Decode, Encode)]
 pub enum ServerboundMessage {
     Ping,
-    Spawn(AppDescription)
+    Spawn(AppDescription),
 }
 
 #[derive(Debug, Decode, Encode)]
@@ -31,7 +27,7 @@ pub enum AppDescription {
 #[derive(Debug, Decode, Encode)]
 pub enum ClientboundMessage {
     Pong,
-    AppResult(String) // TODO: apps return much prettier things than String. This could be type-safe, but requires a bit of thought.
+    AppResult(String), // TODO: apps return much prettier things than String. This could be type-safe, but requires a bit of thought.
 }
 
 #[derive(Debug, Error, Display, From)]
@@ -41,13 +37,14 @@ pub enum IpcReceiveError {
 }
 
 pub struct IpcClient<In, Out> {
-    sender: Rc<Mutex<SendHalf>>,
+    sender: Rc<Mutex<OwnedWriteHalf>>,
     receiver: Rc<Mutex<IpcClientReceiverInner>>,
+    addr: SocketAddr,
     marker: std::marker::PhantomData<(In, Out)>,
 }
 
 struct IpcClientReceiverInner {
-    receiver: RecvHalf,
+    receiver: OwnedReadHalf,
     buffer: Vec<u8>,
 }
 
@@ -56,8 +53,8 @@ where
     In: bincode::Decode<()>,
     Out: bincode::Encode,
 {
-    fn new(stream: Stream) -> Self {
-        let (receiver, sender) = stream.split();
+    fn new(stream: UnixStream, addr: SocketAddr) -> Self {
+        let (receiver, sender) = stream.into_split();
         Self {
             receiver: Rc::new(Mutex::new(IpcClientReceiverInner {
                 receiver,
@@ -65,6 +62,7 @@ where
             })),
             sender: Rc::new(Mutex::new(sender)),
             marker: Default::default(),
+            addr,
         }
     }
 
@@ -98,7 +96,10 @@ where
                 Err(e) => return Err(e.into()),
             }
 
-            let _ = receiver.read_buf(buffer).await?;
+            if receiver.read_buf(buffer).await? == 0 {
+                let err: std::io::Error = std::io::ErrorKind::BrokenPipe.into();
+                return Err(err.into());
+            }
         }
     }
 }
@@ -108,104 +109,64 @@ impl<A, B> Clone for IpcClient<A, B> {
         Self {
             sender: self.sender.clone(),
             receiver: self.receiver.clone(),
-            marker: Default::default()
+            addr: self.addr.clone(),
+            marker: Default::default(),
         }
     }
 }
 
 pub struct IpcServer {
-    pub listener: Listener,
+    pub listener: UnixListener,
 }
 
 impl IpcServer {
     pub async fn accept(
         &self,
     ) -> std::io::Result<IpcClient<ServerboundMessage, ClientboundMessage>> {
-        let stream = self.listener.accept().await?;
-        let client = IpcClient::new(stream);
+        let (stream, addr) = self.listener.accept().await?;
+        let client = IpcClient::new(stream, addr.into());
 
         Ok(client)
     }
 }
 
-pub fn get_polymodo_socket_name() -> std::io::Result<Name<'static>> {
-    if GenericNamespaced::is_supported() {
-        "polymodo.sock".to_ns_name::<GenericNamespaced>()
-    } else {
-        POLYMODO_SOCK_PATH.to_fs_name::<GenericFilePath>()
-    }
+pub fn get_polymodo_socket_addr() -> SocketAddr {
+    use std::os::linux::net::SocketAddrExt;
+
+    SocketAddr::from_abstract_name(b"polymodo.sock")
+        .expect("can't construct polymodo socket address. Is abstract namespacing not supported on the version of linux you are running?")
 }
 
 pub async fn create_ipc_server() -> std::io::Result<IpcServer> {
-    let listener = create_connection_listener().await?;
+    let listener = create_listener().await?;
 
     let server = IpcServer { listener };
 
     Ok(server)
 }
 
-async fn create_connection_listener() -> std::io::Result<Listener> {
-    let name = get_polymodo_socket_name()?;
-    let listener = try_creating_listener_with_cleanup(name)?;
+async fn create_listener() -> std::io::Result<UnixListener> {
+    let addr = get_polymodo_socket_addr();
+    let listener = bind_listener(addr)?;
 
     Ok(listener)
 }
 
-fn try_creating_listener_with_cleanup(name: Name) -> std::io::Result<Listener> {
-    let create = |name: Name| -> std::io::Result<Listener> {
-        ListenerOptions::new()
-            .name(name)
-            .nonblocking(ListenerNonblockingMode::Both)
-            .create_tokio()
-    };
+fn bind_listener(addr: SocketAddr) -> std::io::Result<UnixListener> {
+    let listener = std::os::unix::net::UnixListener::bind_addr(&addr)?;
+    listener.set_nonblocking(true)?;
+    let listener = UnixListener::from_std(listener)?;
 
-    let listener = match create(name.clone()) {
-        // `AddrInUse` signals that the socket (file) already exists,
-        // yet we couldn't connect earlier (otherwise we wouldn't be trying to create a listener)
-        // polymodo assumes in this instance that the socket is a corpse, tries to remove it if
-        // possible, attempts to create again, and otherwise quits.
-        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            let path = POLYMODO_SOCK_PATH;
-            if name.is_path() {
-                let path = PathBuf::from(path);
-                if path.exists() && path.is_file() {
-                    // try to delete the file
-                    match std::fs::remove_file(&path) {
-                        Ok(_) => {
-                            log::info!("Removed (presumed) dead socket at {path:?}")
-                        }
-                        Err(e) => {
-                            log::error!("Failed to remove socket at {path:?}, but neither can I connect to it.");
-                            log::error!("This means polymodo cannot start as a daemon: either remove the socket file, or start polymodo in non-daemon mode.");
-                            log::error!("Error: {e}");
-                            std::process::exit(-1);
-                        }
-                    };
-                }
-            }
-
-            // try creating the socket once more
-            match create(name.clone()) {
-                Ok(listener) => listener,
-                Err(e) => {
-                    log::error!("Could not create socket at {path}");
-                    log::error!("This means polymodo cannot start as a daemon: either remove the socket file, or start polymodo in non-daemon mode.");
-                    log::error!("Error: {e}");
-                    std::process::exit(-1);
-                }
-            }
-        }
-        listener => listener?,
-    };
     Ok(listener)
 }
 
-pub async fn connect_to_polymodo_daemon(
-) -> std::io::Result<IpcC2S> {
-    let name = get_polymodo_socket_name()?;
-    let stream = Stream::connect(name).await?;
+pub async fn connect_to_polymodo_daemon() -> std::io::Result<IpcC2S> {
+    let addr = get_polymodo_socket_addr();
+    let stream = std::os::unix::net::UnixStream::connect_addr(&addr)?;
+    stream.set_nonblocking(true)?;
+    let stream = stream.try_into()?;
 
-    let client = IpcClient::new(stream);
+    let client = IpcClient::new(stream, addr.into());
 
     Ok(client)
 }
