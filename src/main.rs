@@ -50,6 +50,9 @@ async fn main() -> anyhow::Result<()> {
                 .expect("failed to send");
 
             println!("{:?}", client.recv().await);
+
+            client.send(ServerboundMessage::Goodbye).await.expect("send failed");
+            client.shutdown().await.expect("shutdown failed");
         }
         Err(err) if err.kind() == ErrorKind::ConnectionRefused => {
             // ConnectionRefused happens when there is no one listening on the other end, i.e.

@@ -102,7 +102,7 @@ fn create_server_task(
                 continue;
             };
 
-            log::debug!("accept new connection");
+            log::debug!("accept new connection at {:?}", client.addr());
 
             let _ = tokio::task::spawn_local(serve_client(Rc::clone(&polymodo), client));
         }
@@ -140,6 +140,13 @@ async fn serve_client(polymodo: Rc<Polymodo>, client: IpcS2C) {
                 });
 
                 Ok(())
+            }
+            // this client is about to quit.
+            ServerboundMessage::Goodbye => {
+                log::debug!("closing connection at {:?}", client.addr());
+                let _ = client.shutdown().await;
+
+                return;
             }
         };
     }

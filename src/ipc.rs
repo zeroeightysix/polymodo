@@ -17,6 +17,7 @@ pub type IpcS2C = IpcClient<ServerboundMessage, ClientboundMessage>;
 pub enum ServerboundMessage {
     Ping,
     Spawn(AppDescription),
+    Goodbye,
 }
 
 #[derive(Debug, Decode, Encode)]
@@ -48,11 +49,7 @@ struct IpcClientReceiverInner {
     buffer: Vec<u8>,
 }
 
-impl<In, Out> IpcClient<In, Out>
-where
-    In: bincode::Decode<()>,
-    Out: bincode::Encode,
-{
+impl<A, B> IpcClient<A, B> {
     fn new(stream: UnixStream, addr: SocketAddr) -> Self {
         let (receiver, sender) = stream.into_split();
         Self {
@@ -66,6 +63,22 @@ where
         }
     }
 
+    pub fn addr(&self) -> &SocketAddr {
+        &self.addr
+    }
+
+    pub async fn shutdown(&self) -> std::io::Result<()> {
+        self.sender.lock().await.shutdown().await?;
+
+        Ok(())
+    }
+}
+
+impl<In, Out> IpcClient<In, Out>
+where
+    In: bincode::Decode<()>,
+    Out: bincode::Encode,
+{
     pub async fn send(&self, message: Out) -> anyhow::Result<()> {
         let mut sender = self.sender.lock().await;
 
