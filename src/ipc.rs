@@ -13,6 +13,9 @@ use tokio::sync::Mutex;
 const POLYMODO_SOCK_PATH: &'static str = "/tmp/polymodo.sock";
 const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
+pub type IpcC2S = IpcClient<ClientboundMessage, ServerboundMessage>;
+pub type IpcS2C = IpcClient<ServerboundMessage, ClientboundMessage>;
+
 #[derive(Debug, Decode, Encode)]
 pub enum ServerboundMessage {
     Ping,
@@ -180,7 +183,7 @@ fn try_creating_listener_with_cleanup(name: Name) -> std::io::Result<Listener> {
 }
 
 pub async fn connect_to_polymodo_daemon(
-) -> std::io::Result<IpcClient<ClientboundMessage, ServerboundMessage>> {
+) -> std::io::Result<IpcC2S> {
     let name = get_polymodo_socket_name()?;
     let stream = Stream::connect(name).await?;
 

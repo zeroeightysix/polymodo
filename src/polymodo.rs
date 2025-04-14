@@ -1,6 +1,6 @@
 use crate::app_surface_driver;
 use crate::app_surface_driver::{create_app_driver, new_app_key, AppEvent};
-use crate::ipc::{ClientboundMessage, IpcClient, IpcServer, ServerboundMessage};
+use crate::ipc::{ClientboundMessage, IpcS2C, IpcServer, ServerboundMessage};
 use crate::mode::launch::Launcher;
 use crate::windowing::app::{App, AppSender, AppSetup};
 use crate::windowing::client::{SurfaceEvent, WaylandClient};
@@ -114,7 +114,7 @@ fn create_server_task(
 /// Given an [IpcClient], perform the read loop, serving any requests made by the client.
 async fn serve_client(
     _polymodo: Rc<Polymodo>,
-    client: IpcClient<ServerboundMessage, ClientboundMessage>,
+    client: IpcS2C,
 ) {
     loop {
         let message = match client.recv().await {
