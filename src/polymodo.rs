@@ -7,6 +7,39 @@ use anyhow::Context;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+struct Polymodo {
+    surf_driver_event_sender: mpsc::Sender<SurfaceEvent>,
+    surf_driver_app_sender: local_channel::mpsc::Sender<AppEvent>,
+}
+
+impl Polymodo {
+    fn spawn_app<A: App + 'static>(&self) -> anyhow::Result<JoinHandle<<A as App>::Output>>
+    where
+        A::Message: 'static,
+        A::Output: 'static,
+    {
+        // create a new key for this app.
+        // (it's just a number)
+        let key = new_app_key();
+        let send = AppSender::new(key, self.surf_driver_app_sender.clone());
+        let AppSetup { app, mut effects } = A::create(send);
+        let driver = create_app_driver(key, app, self.surf_driver_event_sender.clone());
+
+        self.surf_driver_app_sender
+            .send(AppEvent::NewApp {
+                app_driver: Box::new(driver),
+                layer_surface_options: Launcher::layer_surface_options(),
+            })
+            .ok()
+            .context("Failed to spawn launcher app")?;
+
+        Ok(tokio::task::spawn_local(async move {
+            effects.join_next().await.unwrap().unwrap() // TODO: we need an abstraction on AppSetup to guarantee an effect
+        }))
+    }
+
+}
+
 pub async fn run() -> anyhow::Result<std::convert::Infallible> {
     // two channels: one for events (that is Send + Sync)
     let (surf_driver_event_sender, event_receive) = mpsc::channel(128);
@@ -32,40 +65,18 @@ pub async fn run() -> anyhow::Result<std::convert::Infallible> {
     // set up the dispatch task which polls wayland and sends client to the surface app driver
     let dispatch_task = create_dispatch_task(client);
 
-    spawn_app::<Launcher>(surf_driver_event_sender, surf_driver_app_sender)?;
+    let poly = Polymodo {
+        surf_driver_event_sender,
+        surf_driver_app_sender,
+    };
+
+    poly.spawn_app::<Launcher>()?;
 
     // both surf_drive_task and dispatch_task should never complete.
     // we could join and wait on them here, but either will never finish.. so we just pick one:
     Ok(dispatch_task.await?)
 }
 
-fn spawn_app<A: App + 'static>(
-    surf_driver_event_sender: mpsc::Sender<SurfaceEvent>,
-    surf_driver_app_sender: local_channel::mpsc::Sender<AppEvent>,
-) -> anyhow::Result<JoinHandle<<A as App>::Output>>
-where
-    A::Message: 'static,
-    A::Output: 'static,
-{
-    // create a new key for this app.
-    // (it's just a number)
-    let key = new_app_key();
-    let send = AppSender::new(key, surf_driver_app_sender.clone());
-    let AppSetup { app, mut effects } = A::create(send);
-    let driver = create_app_driver(key, app, surf_driver_event_sender);
-
-    surf_driver_app_sender
-        .send(AppEvent::NewApp {
-            app_driver: Box::new(driver),
-            layer_surface_options: Launcher::layer_surface_options(),
-        })
-        .ok()
-        .context("Failed to spawn launcher app")?;
-
-    Ok(tokio::task::spawn_local(async move {
-        effects.join_next().await.unwrap().unwrap() // TODO: we need an abstraction on AppSetup to guarantee an effect
-    }))
-}
 
 fn create_dispatch_task(mut client: WaylandClient) -> JoinHandle<std::convert::Infallible> {
     tokio::task::spawn_blocking(move || loop {
