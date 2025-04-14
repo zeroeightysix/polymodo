@@ -176,7 +176,7 @@ impl App for Launcher {
                 loop {
                     notify.notified().await;
 
-                    message_sender.send(Message::Search).unwrap()
+                    let _ = message_sender.send(Message::Search);
                 }
             })
             // output effect

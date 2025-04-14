@@ -1,12 +1,15 @@
 mod app_surface_driver;
 mod config;
 mod fuzzy_search;
+mod ipc;
 mod live_handle;
 mod mode;
 mod polymodo;
 mod windowing;
 mod xdg;
 
+use crate::ipc::ServerboundMessage;
+use std::io::ErrorKind;
 use std::sync::OnceLock;
 use std::time::Instant;
 use tokio::task::LocalSet;
@@ -36,6 +39,41 @@ async fn main() -> anyhow::Result<()> {
 
     log_panics::init();
 
+    // try connecting to a running polymodo daemon.
+    match ipc::connect_to_polymodo_daemon().await {
+        Ok(client) => {
+            // ok, we have a client, let's talk with the server!
+
+            client
+                .send(ServerboundMessage::Ping)
+                .await
+                .expect("failed to send");
+
+            println!("{:?}", client.recv().await);
+        }
+        Err(err) if err.kind() == ErrorKind::ConnectionRefused => {
+            // ConnectionRefused happens when there is no one listening on the other end, i.e.
+            // there isn't a polymodo daemon yet.
+            // let's become that!
+            log::info!("Starting polymodo daemon");
+
+            run_polymodo_daemon().await;
+        }
+        Err(e) => {
+            // errors other than ConnectionRefused are considered fatal, as something other went
+            // wrong other than "there isn't anyone listening"
+            log::error!("Failed to connect to running polymodo daemon: {e}");
+            log::error!("If this happens even though you are sure there is no instance of polymodo running already, then this is a bug: please report it!");
+
+            std::process::exit(-1);
+        }
+    }
+
+    Ok(())
+}
+
+/// Start the polymodo server.
+async fn run_polymodo_daemon() {
     LocalSet::new()
         .run_until(async move {
             let Err(e) = polymodo::run().await;
@@ -43,6 +81,4 @@ async fn main() -> anyhow::Result<()> {
             log::error!("Error running polymodo: {e}");
         })
         .await;
-
-    Ok(())
 }

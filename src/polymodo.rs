@@ -1,9 +1,11 @@
 use crate::app_surface_driver;
 use crate::app_surface_driver::{create_app_driver, new_app_key, AppEvent};
+use crate::ipc::{ClientboundMessage, IpcClient, IpcServer, ServerboundMessage};
 use crate::mode::launch::Launcher;
 use crate::windowing::app::{App, AppSender, AppSetup};
 use crate::windowing::client::{SurfaceEvent, WaylandClient};
 use anyhow::Context;
+use std::rc::Rc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -50,6 +52,10 @@ impl Polymodo {
 }
 
 pub async fn run() -> anyhow::Result<std::convert::Infallible> {
+    // set up the polymodo daemon socket for clients to connect to
+    // TODO: should be configurable if this is done at all, for a standalone mode!
+    let ipc_server = crate::ipc::create_ipc_server().await?; // TODO: try? here is probably not good
+
     // two channels: one for events (that is Send + Sync)
     let (surf_driver_event_sender, event_receive) = mpsc::channel(128);
     // and one for app creation, which is !Send and !Sync, so that we do not need a Send+Sync requirement
@@ -74,16 +80,66 @@ pub async fn run() -> anyhow::Result<std::convert::Infallible> {
     // set up the dispatch task which polls wayland and sends client to the surface app driver
     let dispatch_task = create_dispatch_task(client);
 
-    let poly = Polymodo {
+    let poly = Rc::new(Polymodo {
         surf_driver_event_sender,
         surf_driver_app_sender,
-    };
+    });
+
+    let _server_task = create_server_task(poly.clone(), ipc_server);
 
     poly.spawn_app::<Launcher>()?;
 
     // both surf_drive_task and dispatch_task should never complete.
     // we could join and wait on them here, but either will never finish.. so we just pick one:
     Ok(dispatch_task.await?)
+}
+
+fn create_server_task(
+    polymodo: Rc<Polymodo>,
+    ipc_server: IpcServer,
+) -> JoinHandle<std::convert::Infallible> {
+    tokio::task::spawn_local(async move {
+        loop {
+            let Ok(client) = ipc_server.accept().await else {
+                continue;
+            };
+
+            log::debug!("accept new connection");
+
+            let _ = tokio::task::spawn_local(serve_client(Rc::clone(&polymodo), client));
+        }
+    })
+}
+
+/// Given an [IpcClient], perform the read loop, serving any requests made by the client.
+async fn serve_client(
+    _polymodo: Rc<Polymodo>,
+    client: IpcClient<ServerboundMessage, ClientboundMessage>,
+) {
+    loop {
+        let message = match client.recv().await {
+            Err(crate::ipc::IpcReceiveError::DecodeError(e)) => {
+                log::error!("could not decode message from client: {e}");
+                log::error!("this is fatal: aborting connection with client.");
+                return;
+            }
+            Err(crate::ipc::IpcReceiveError::IoError(e)) => {
+                log::error!("io error while reading from client: {e}");
+                log::error!("this is fatal: aborting connection with client.");
+                return;
+            }
+            Ok(m) => m,
+        };
+
+        match message {
+            ServerboundMessage::Ping => {
+                client
+                    .send(ClientboundMessage::Pong)
+                    .await
+                    .expect("failed to send"); // TODO
+            }
+        }
+    }
 }
 
 fn create_dispatch_task(mut client: WaylandClient) -> JoinHandle<std::convert::Infallible> {
