@@ -8,7 +8,7 @@ mod polymodo;
 mod windowing;
 mod xdg;
 
-use crate::ipc::ServerboundMessage;
+use crate::ipc::{AppDescription, ServerboundMessage};
 use std::io::ErrorKind;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
             // ok, we have a client, let's talk with the server!
 
             client
-                .send(ServerboundMessage::Ping)
+                .send(ServerboundMessage::Spawn(AppDescription::Launcher))
                 .await
                 .expect("failed to send");
 

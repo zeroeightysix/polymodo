@@ -7,6 +7,7 @@ use interprocess::local_socket::{
     ToFsName, ToNsName,
 };
 use std::path::PathBuf;
+use std::rc::Rc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
@@ -19,11 +20,18 @@ pub type IpcS2C = IpcClient<ServerboundMessage, ClientboundMessage>;
 #[derive(Debug, Decode, Encode)]
 pub enum ServerboundMessage {
     Ping,
+    Spawn(AppDescription)
+}
+
+#[derive(Debug, Decode, Encode)]
+pub enum AppDescription {
+    Launcher,
 }
 
 #[derive(Debug, Decode, Encode)]
 pub enum ClientboundMessage {
     Pong,
+    AppResult(String) // TODO: apps return much prettier things than String. This could be type-safe, but requires a bit of thought.
 }
 
 #[derive(Debug, Error, Display, From)]
@@ -33,8 +41,8 @@ pub enum IpcReceiveError {
 }
 
 pub struct IpcClient<In, Out> {
-    sender: Mutex<SendHalf>,
-    receiver: Mutex<IpcClientReceiverInner>,
+    sender: Rc<Mutex<SendHalf>>,
+    receiver: Rc<Mutex<IpcClientReceiverInner>>,
     marker: std::marker::PhantomData<(In, Out)>,
 }
 
@@ -51,11 +59,11 @@ where
     fn new(stream: Stream) -> Self {
         let (receiver, sender) = stream.split();
         Self {
-            receiver: Mutex::new(IpcClientReceiverInner {
+            receiver: Rc::new(Mutex::new(IpcClientReceiverInner {
                 receiver,
                 buffer: Vec::with_capacity(128),
-            }),
-            sender: Mutex::new(sender),
+            })),
+            sender: Rc::new(Mutex::new(sender)),
             marker: Default::default(),
         }
     }
@@ -91,6 +99,16 @@ where
             }
 
             let _ = receiver.read_buf(buffer).await?;
+        }
+    }
+}
+
+impl<A, B> Clone for IpcClient<A, B> {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            receiver: self.receiver.clone(),
+            marker: Default::default()
         }
     }
 }

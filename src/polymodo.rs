@@ -1,10 +1,9 @@
 use crate::app_surface_driver;
 use crate::app_surface_driver::{create_app_driver, new_app_key, AppEvent};
-use crate::ipc::{ClientboundMessage, IpcS2C, IpcServer, ServerboundMessage};
+use crate::ipc::{AppDescription, ClientboundMessage, IpcS2C, IpcServer, ServerboundMessage};
 use crate::mode::launch::Launcher;
 use crate::windowing::app::{App, AppSender, AppSetup};
 use crate::windowing::client::{SurfaceEvent, WaylandClient};
-use anyhow::Context;
 use std::rc::Rc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -15,7 +14,7 @@ struct Polymodo {
 }
 
 impl Polymodo {
-    fn spawn_app<A: App + 'static>(&self) -> anyhow::Result<JoinHandle<<A as App>::Output>>
+    fn spawn_app<A: App + 'static>(&self) -> JoinHandle<<A as App>::Output>
     where
         A::Message: 'static,
         A::Output: 'static,
@@ -33,10 +32,9 @@ impl Polymodo {
                 app_driver: Box::new(driver),
                 layer_surface_options: Launcher::layer_surface_options(),
             })
-            .ok()
-            .context("Failed to spawn launcher app")?;
+            .expect("failed to spawn new app; thus the app driver is dead; polymodo cannot function anymore.");
 
-        Ok(tokio::task::spawn_local(async move {
+        tokio::task::spawn_local(async move {
             let output = effects.join_next().await.unwrap().unwrap(); // TODO: we need an abstraction on AppSetup to guarantee an effect
 
             // the app has finished, so we must remove it now.
@@ -47,7 +45,7 @@ impl Polymodo {
 
             output
             // TODO: handle output
-        }))
+        })
     }
 }
 
@@ -87,7 +85,7 @@ pub async fn run() -> anyhow::Result<std::convert::Infallible> {
 
     let _server_task = create_server_task(poly.clone(), ipc_server);
 
-    poly.spawn_app::<Launcher>()?;
+    poly.spawn_app::<Launcher>();
 
     // both surf_drive_task and dispatch_task should never complete.
     // we could join and wait on them here, but either will never finish.. so we just pick one:
@@ -113,7 +111,7 @@ fn create_server_task(
 
 /// Given an [IpcClient], perform the read loop, serving any requests made by the client.
 async fn serve_client(
-    _polymodo: Rc<Polymodo>,
+    polymodo: Rc<Polymodo>,
     client: IpcS2C,
 ) {
     loop {
@@ -131,14 +129,26 @@ async fn serve_client(
             Ok(m) => m,
         };
 
-        match message {
+        let _ = match message {
             ServerboundMessage::Ping => {
                 client
                     .send(ClientboundMessage::Pong)
                     .await
-                    .expect("failed to send"); // TODO
             }
-        }
+            ServerboundMessage::Spawn(AppDescription::Launcher) => {
+                let result = polymodo.spawn_app::<Launcher>();
+                let client = client.clone();
+
+                tokio::task::spawn_local(async move {
+                    let app_result = result.await.expect("failed to join app task");
+                    let app_result = format!("{:?}", app_result);
+
+                    let _ = client.send(ClientboundMessage::AppResult(app_result)).await;
+                });
+
+                Ok(())
+            }
+        };
     }
 }
 
