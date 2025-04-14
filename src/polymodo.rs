@@ -38,9 +38,7 @@ impl Polymodo {
             let output = effects.join_next().await.unwrap().unwrap(); // TODO: we need an abstraction on AppSetup to guarantee an effect
 
             // the app has finished, so we must remove it now.
-            if let Err(e) = surf_driver_app_sender.send(AppEvent::DestroyApp {
-                app_key: key
-            }) {
+            if let Err(e) = surf_driver_app_sender.send(AppEvent::DestroyApp { app_key: key }) {
                 log::error!("failed to send destruction event to `surf_driver_app_sender`: that's pretty bad");
                 log::error!("{e:?}");
             }
@@ -49,7 +47,6 @@ impl Polymodo {
             // TODO: handle output
         }))
     }
-
 }
 
 pub async fn run() -> anyhow::Result<std::convert::Infallible> {

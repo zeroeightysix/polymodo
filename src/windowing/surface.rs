@@ -188,7 +188,7 @@ impl Surface {
             },
         );
     }
-    
+
     pub fn set_unscaled_size(&mut self, mut width: u32, mut height: u32) {
         if width == 0 {
             width = self.unscaled_size.0;
@@ -197,7 +197,10 @@ impl Surface {
             height = self.unscaled_size.1;
         }
         self.unscaled_size = (width, height);
-        self.size = ((width as f32 * self.scale) as u32, (height as f32 * self.scale) as u32);
+        self.size = (
+            (width as f32 * self.scale) as u32,
+            (height as f32 * self.scale) as u32,
+        );
         self.configure_surface();
         self.update_viewport();
     }
@@ -266,7 +269,7 @@ impl Surface {
     pub fn set_exit(&mut self) {
         self.exit = true;
     }
-    
+
     pub fn set_scale(&mut self, scale: f32) {
         self.scale = scale;
         // update the size, which also updates the gpu surface and viewport

@@ -118,7 +118,9 @@ where
     /// requiring shared ownership of the [FuzzySearch]
     pub fn pusher(&self) -> impl Fn(D) + Send + Sync {
         let injector = self.injector.clone();
-        move |entry: D| { Self::push_into(&injector, entry); }
+        move |entry: D| {
+            Self::push_into(&injector, entry);
+        }
     }
 
     /// Add an entry to the matcher.

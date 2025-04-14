@@ -1,11 +1,11 @@
 mod app_surface_driver;
 mod config;
 mod fuzzy_search;
+mod live_handle;
 mod mode;
 mod polymodo;
 mod windowing;
 mod xdg;
-mod live_handle;
 
 use std::sync::OnceLock;
 use std::time::Instant;
