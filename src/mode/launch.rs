@@ -1,24 +1,57 @@
 use crate::fuzzy_search::{FuzzySearch, Row};
 use crate::windowing::app::{App, AppSender, AppSetup};
 use crate::windowing::surface::LayerSurfaceOptions;
-use crate::xdg::DesktopEntry;
-use anyhow::{anyhow, bail};
-use egui::RichText;
+use crate::xdg::{find_desktop_entries};
+use anyhow::anyhow;
+use egui::{ImageSource, RichText};
 use egui_extras::{Column, TableBuilder};
+use nucleo::Utf32String;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 
-fn desktop_entries() -> &'static Vec<SearchRow> {
-    static DESKTOP_ENTRIES: OnceLock<Vec<SearchRow>> = OnceLock::new();
-    DESKTOP_ENTRIES.get_or_init(|| {
-        crate::xdg::find_desktop_entries()
-            .into_iter()
-            .map(|v| SearchRow(&*Box::leak(Box::new(v))))
-            .collect()
-    })
+fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
+    static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
+
+    // immediately push cached entries
+    {
+        let rows = DESKTOP_ENTRIES.lock().unwrap();
+        for row in &*rows {
+            pusher(row.clone())
+        }
+    }
+
+    // then start a search for new ones
+    let entries = find_desktop_entries().collect::<Vec<_>>();
+    // and add any new ones to the searcher
+    {
+        let mut rows = DESKTOP_ENTRIES.lock().unwrap();
+        for entry in entries {
+            let Some(exec) = entry.exec else {
+                continue;
+            };
+
+            // if, for this desktop entry, there exists no SearchRow yet (with comparison being done on the source path)
+            if !rows.iter().any(|row| entry.source_path == row.path()) {
+                log::debug!("new entry {}", entry.source_path.to_string_lossy());
+                
+                // add a new search entry for this desktop entry.
+                rows.push(SearchRow(Arc::new(LauncherEntry {
+                    name: entry.name,
+                    path: entry.source_path,
+                    exec,
+                    icon: entry.icon,
+                    icon_resolved: None, // TODO
+                })));
+
+                // and also add it to the fuzzy searcher
+                let entry = rows.last().unwrap().clone();
+                pusher(entry);
+            }
+        }
+    }
 }
 
 pub struct Launcher {
@@ -28,6 +61,15 @@ pub struct Launcher {
     show_entries: Vec<SearchRow>,
     selected_entry_idx: usize,
     finish: Option<tokio::sync::oneshot::Sender<<Self as App>::Output>>,
+}
+
+#[derive(Debug, Clone)]
+struct LauncherEntry {
+    name: String,
+    path: PathBuf,
+    exec: String,
+    icon: Option<String>,
+    icon_resolved: Option<ImageSource<'static>>,
 }
 
 impl Launcher {
@@ -85,8 +127,8 @@ impl Launcher {
             && !self.show_entries.is_empty()
         {
             let entry = self.show_entries.get(self.selected_entry_idx);
-            if let Some(entry) = entry.map(|e| e.0) {
-                if let Err(e) = launch(&entry) {
+            if let Some(entry) = entry.map(|e| e.0.as_ref()) {
+                if let Err(e) = launch(entry) {
                     log::error!("failed to launch with error {e}");
                 }
 
@@ -107,7 +149,7 @@ impl Launcher {
         table.body(|body| {
             body.rows(row_height, self.show_entries.len(), |mut row| {
                 let idx = row.index();
-                let entry = self.show_entries[idx];
+                let entry = &self.show_entries[idx];
                 let checked = self.selected_entry_idx == idx;
                 row.col(|ui| {
                     let mut text = RichText::new(entry.name());
@@ -151,12 +193,7 @@ impl App for Launcher {
 
         let (finish, finish_recv) = tokio::sync::oneshot::channel();
 
-        tokio::task::spawn_blocking(move || {
-            let desktop_entries: Vec<_> = desktop_entries().to_vec();
-            for entry in desktop_entries {
-                pusher(entry);
-            }
-        });
+        tokio::task::spawn_blocking(move || scour_desktop_entries(pusher));
 
         let launcher = Launcher {
             search_input: String::new(),
@@ -193,7 +230,7 @@ impl App for Launcher {
         match message {
             Message::Search => {
                 self.search.tick();
-                self.show_entries = self.search.get_matches().into_iter().copied().collect();
+                self.show_entries = self.search.get_matches().into_iter().cloned().collect();
             }
         }
     }
@@ -215,11 +252,7 @@ impl App for Launcher {
     }
 }
 
-fn launch(entry: &DesktopEntry) -> anyhow::Result<()> {
-    let Some(exec) = &entry.exec else {
-        bail!("entry does not have an `Exec` key");
-    };
-
+fn launch(entry: &LauncherEntry) -> anyhow::Result<()> {
     match fork::fork().map_err(|_| anyhow!("failed to fork process"))? {
         fork::Fork::Child => {
             // detach
@@ -231,7 +264,7 @@ fn launch(entry: &DesktopEntry) -> anyhow::Result<()> {
             }
 
             // %f and %F: lists of files. polymodo does not yet support selecting files.
-            let exec = exec.replace("%f", "").replace("%F", "");
+            let exec = entry.exec.replace("%f", "").replace("%F", "");
             // same story for %u and %U:
             let exec = exec.replace("%u", "").replace("%U", "");
 
@@ -242,7 +275,7 @@ fn launch(entry: &DesktopEntry) -> anyhow::Result<()> {
                     "%i" => vec!["--icon", entry.icon.as_deref().unwrap_or("")],
                     "%c" => vec![entry.name.as_str()],
                     "%k" => {
-                        vec![entry.source_path.as_os_str().to_str().unwrap_or("")]
+                        vec![entry.path.as_os_str().to_str().unwrap_or("")]
                     }
                     // remove empty strings as arguments; these may be left over from
                     //   trailing/subsequent whitespaces, and cause programs to misbehave.
@@ -282,19 +315,23 @@ pub enum Message {
     Search,
 }
 
-#[derive(Copy, Clone, Debug)]
-struct SearchRow(pub &'static DesktopEntry);
+#[derive(Clone, Debug)]
+struct SearchRow(pub Arc<LauncherEntry>);
 
 impl Row<1> for SearchRow {
-    type Output = &'static str;
+    type Output = Utf32String;
 
     fn columns(&self) -> [Self::Output; 1] {
-        [self.name()]
+        [self.name().into()]
     }
 }
 
 impl SearchRow {
-    fn name(&self) -> &'static str {
-        self.0.name()
+    fn name(&self) -> &str {
+        self.0.name.as_str()
+    }
+
+    fn path(&self) -> &Path {
+        &self.0.path
     }
 }

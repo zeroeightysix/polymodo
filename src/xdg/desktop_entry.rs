@@ -19,12 +19,6 @@ pub struct DesktopEntry {
     pub icon: Option<String>,
 }
 
-impl DesktopEntry {
-    pub fn name(&self) -> &str {
-        self.name.as_ref()
-    }
-}
-
 #[derive(Copy, Clone, Debug, strum::EnumString)]
 pub enum ApplicationType {
     Application,
@@ -72,11 +66,11 @@ pub fn load(path: impl AsRef<Path>) -> anyhow::Result<DesktopEntry> {
     })
 }
 
-pub fn find_desktop_entries() -> Vec<DesktopEntry> {
+pub fn find_desktop_entries() -> impl Iterator<Item = DesktopEntry> {
     let dirs = xdg::BaseDirectories::new().expect("cannot get base directories");
-    let desktop_files = dirs
-        .get_data_dirs()
-        .iter()
+
+    dirs.get_data_dirs()
+        .into_iter()
         .map(|dir| dir.join("applications"))
         .map(|dir| dir.read_dir())
         .filter_map(Result::ok)
@@ -85,7 +79,4 @@ pub fn find_desktop_entries() -> Vec<DesktopEntry> {
                 .map(|entry| load(entry.path()))
                 .filter_map(Result::ok)
         })
-        .collect::<Vec<_>>();
-
-    desktop_files
 }
