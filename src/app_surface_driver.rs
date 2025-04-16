@@ -63,6 +63,10 @@ fn new_context(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> egui::Co
             handle.abort();
         }
     });
+    
+    // in order to display icons, we need to load their images.
+    // egui requires us to opt into the different type of image loaders, which we do here:
+    egui_extras::install_image_loaders(&context);
 
     context
 }

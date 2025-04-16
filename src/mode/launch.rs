@@ -1,9 +1,9 @@
 use crate::fuzzy_search::{FuzzySearch, Row};
 use crate::windowing::app::{App, AppSender, AppSetup};
 use crate::windowing::surface::LayerSurfaceOptions;
-use crate::xdg::{find_desktop_entries};
+use crate::xdg::find_desktop_entries;
 use anyhow::anyhow;
-use egui::{ImageSource, RichText};
+use egui::{RichText, Vec2, Widget};
 use egui_extras::{Column, TableBuilder};
 use nucleo::Utf32String;
 use std::io::Write;
@@ -35,15 +35,40 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
 
             // if, for this desktop entry, there exists no SearchRow yet (with comparison being done on the source path)
             if !rows.iter().any(|row| entry.source_path == row.path()) {
-                log::debug!("new entry {}", entry.source_path.to_string_lossy());
-                
+                let icon_resolved: Option<String> = if let Some(icon) = entry.icon.clone() {
+                    // if `Icon` is an absolute path, the image pointed at should be loaded:
+                    if icon.starts_with('/') && std::fs::exists(&icon).unwrap_or(false) {
+                        Some(format!("file://{icon}"))
+                    } else {
+                        // find the icon according to the spec:
+                        let icon_path = linicon::lookup_icon(icon)
+                            .with_scale(1) // TODO: use the surface scale
+                            // .with_size(16) // TODO: not sensible
+                            .filter_map(Result::ok)
+                            .next();
+
+                        icon_path.map(|ip| {
+                            let path = ip.path.to_string_lossy().to_string();
+                            format!("file://{path}")
+                        })
+                    }
+                } else {
+                    None
+                };
+
+                log::debug!(
+                    "new entry {}, icon {:?}",
+                    entry.source_path.to_string_lossy(),
+                    &icon_resolved
+                );
+
                 // add a new search entry for this desktop entry.
                 rows.push(SearchRow(Arc::new(LauncherEntry {
                     name: entry.name,
                     path: entry.source_path,
                     exec,
                     icon: entry.icon,
-                    icon_resolved: None, // TODO
+                    icon_resolved, // TODO
                 })));
 
                 // and also add it to the fuzzy searcher
@@ -69,7 +94,7 @@ struct LauncherEntry {
     path: PathBuf,
     exec: String,
     icon: Option<String>,
-    icon_resolved: Option<ImageSource<'static>>,
+    icon_resolved: Option<String>,
 }
 
 impl Launcher {
@@ -152,18 +177,26 @@ impl Launcher {
                 let entry = &self.show_entries[idx];
                 let checked = self.selected_entry_idx == idx;
                 row.col(|ui| {
-                    let mut text = RichText::new(entry.name());
-                    if checked {
-                        text = text.strong();
-                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let mut text = RichText::new(entry.name());
+                        if checked {
+                            text = text.strong();
+                        }
 
-                    let label = ui.label(text);
-                    if label.clicked() {
-                        self.selected_entry_idx = idx;
-                    }
-                    if label.hovered() {
-                        label.highlight();
-                    }
+                        if let Some(icon) = entry.icon() {
+                            egui::Image::new(icon)
+                                .fit_to_exact_size(Vec2::splat(16.0))
+                                .ui(ui);
+                        }
+
+                        let label = ui.label(text);
+                        if label.clicked() {
+                            self.selected_entry_idx = idx;
+                        }
+                        if label.hovered() {
+                            label.highlight();
+                        }
+                    });
                 });
             })
         });
@@ -329,6 +362,10 @@ impl Row<1> for SearchRow {
 impl SearchRow {
     fn name(&self) -> &str {
         self.0.name.as_str()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        self.0.icon_resolved.as_deref()
     }
 
     fn path(&self) -> &Path {
