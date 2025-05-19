@@ -67,10 +67,12 @@ where
     }
 
     /// Send a message to the App, which will be received by its [App::on_message] method.
-    pub fn send(&self, message: M) -> Result<(), SendError<AppEvent>> {
-        self.sender.send(AppEvent::AppMessage {
-            app_key: self.app_key,
-            message: Box::new(message),
-        })
+    pub fn send(&self, message: M) -> Result<(), Box<SendError<AppEvent>>> {
+        self.sender
+            .send(AppEvent::AppMessage {
+                app_key: self.app_key,
+                message: Box::new(message),
+            })
+            .map_err(Box::new)
     }
 }
