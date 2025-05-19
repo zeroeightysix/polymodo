@@ -118,7 +118,9 @@ fn create_server_task(
 
             log::debug!("accept new connection at {:?}", client.addr());
 
-            let _ = tokio::task::spawn_local(serve_client(Rc::clone(&polymodo), client));
+            // explicit drop: dropping a JoinHandle does not cancel the task;
+            // we're simply not interested in ever joining this task
+            drop(tokio::task::spawn_local(serve_client(Rc::clone(&polymodo), client)));
         }
     })
 }

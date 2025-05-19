@@ -96,7 +96,7 @@ where
         } = &mut *self.receiver.lock().await;
 
         loop {
-            match bincode::decode_from_slice(&buffer, BINCODE_CONFIG) {
+            match bincode::decode_from_slice(buffer, BINCODE_CONFIG) {
                 Ok((message, bytes)) => {
                     // remove `bytes` bytes from our buffer
                     // as we might have already read bytes of the next message, it's essential that
@@ -179,7 +179,7 @@ pub async fn connect_to_polymodo_daemon() -> std::io::Result<IpcC2S> {
     stream.set_nonblocking(true)?;
     let stream = stream.try_into()?;
 
-    let client = IpcClient::new(stream, addr.into());
+    let client = IpcClient::new(stream, addr);
 
     Ok(client)
 }
