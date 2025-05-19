@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
 # Windowing
 tokio = { version = "1", features = ["rt", "sync", "net", "time", "macros", "io-util"] }
 smithay-client-toolkit = { version = "0.19.2", default-features = false, features = ["xkbcommon"] }

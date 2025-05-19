@@ -12,11 +12,21 @@ use crate::ipc::{AppDescription, ServerboundMessage};
 use std::io::ErrorKind;
 use std::sync::OnceLock;
 use std::time::Instant;
+use clap::Parser;
 use tokio::task::LocalSet;
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
+
+/// Multimodal window in the centre of your screen that may do things like launch applications
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Do not connect to or launch the polymodo daemon
+    #[arg(long)]
+    standalone: bool,
+}
 
 /// Some starting time.
 ///
@@ -38,6 +48,16 @@ async fn main() -> anyhow::Result<()> {
         .try_init()?;
 
     log_panics::init();
+
+    let args = Args::parse();
+    
+    if args.standalone {
+        log::info!("Starting standalone polymodo");
+        
+        run_polymodo_standalone().await;
+
+        std::process::exit(0);
+    }
 
     // try connecting to a running polymodo daemon.
     match ipc::connect_to_polymodo_daemon().await {
@@ -75,11 +95,20 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Start polymodo in standalone mode
+async fn run_polymodo_standalone() {
+    LocalSet::new()
+        .run_until(async move {
+            let _ = polymodo::run_standalone().await;
+        })
+        .await;
+}
+
 /// Start the polymodo server.
 async fn run_polymodo_daemon() {
     LocalSet::new()
         .run_until(async move {
-            let Err(e) = polymodo::run().await;
+            let Err(e) = polymodo::run_server().await;
 
             log::error!("Error running polymodo: {e}");
         })
