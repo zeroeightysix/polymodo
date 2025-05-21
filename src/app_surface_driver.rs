@@ -63,7 +63,7 @@ fn new_context(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> egui::Co
             handle.abort();
         }
     });
-    
+
     // in order to display icons, we need to load their images.
     // egui requires us to opt into the different type of image loaders, which we do here:
     egui_extras::install_image_loaders(&context);
@@ -119,8 +119,9 @@ impl AppSurfaceDriver {
                     .filter(|surf| surf.has_events())
                     .map(|surf| surf.surface_id())
                     .collect::<Vec<_>>();
+                
                 for surf_id in ids {
-                    self.update(&surf_id)?;
+                    self.with_app_surf_mut(&surf_id, |app, surf| app.request_repaint(surf.viewport_id()))?;
                 }
                 Ok(())
             }
@@ -401,10 +402,6 @@ impl AppSurfaceDriver {
         Ok(())
     }
 
-    fn update(&mut self, surface_id: &SurfaceId) -> anyhow::Result<()> {
-        self.with_app_surf_mut(surface_id, |app, surf| app.update(surf))
-    }
-
     fn surface_by_id(&mut self, surface_id: &SurfaceId) -> Option<&mut Surface> {
         self.surfaces
             .iter_mut()
@@ -425,8 +422,8 @@ impl AppSurfaceDriver {
 /// has GATs that make it dyn incompatible.
 pub trait AppDriver {
     fn key(&self) -> AppKey;
-
-    fn update(&mut self, surface: &mut Surface);
+    
+    fn request_repaint(&self, viewport_id: ViewportId);
 
     fn paint(&mut self, surface: &mut Surface, pass_nr: Option<u64>) -> Result<(), WindowingError>;
 
@@ -450,11 +447,8 @@ where
         self.key
     }
 
-    fn update(&mut self, surface: &mut Surface) {
-        let _full_output = surface.update(&self.ctx, |ctx: &egui::Context| {
-            self.app.render(ctx);
-        });
-        // TODO: handle the full_output
+    fn request_repaint(&self, viewport_id: ViewportId) {
+        self.ctx.request_repaint_of(viewport_id);
     }
 
     fn paint(&mut self, surface: &mut Surface, pass_nr: Option<u64>) -> Result<(), WindowingError> {

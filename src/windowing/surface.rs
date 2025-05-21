@@ -74,8 +74,6 @@ impl Surface {
         ctx: &Context,
         render_ui: impl FnMut(&Context),
     ) -> Result<egui::PlatformOutput, WindowingError> {
-        let output = self.update(ctx, render_ui);
-
         let output_frame = self.wgpu_surface.get_current_texture()?;
         let output_view = output_frame
             .texture
@@ -100,6 +98,8 @@ impl Surface {
                 occlusion_query_set: None,
             })
             .forget_lifetime();
+
+        let output = self.update(ctx, render_ui);
 
         let prims = ctx.tessellate(output.shapes, output.pixels_per_point);
         {
@@ -143,7 +143,7 @@ impl Surface {
         Ok(output.platform_output)
     }
 
-    pub fn update(
+    fn update(
         &mut self,
         ctx: &Context,
         render_ui: impl FnMut(&Context) + Sized,
@@ -250,6 +250,10 @@ impl Surface {
 
     pub fn surface_id(&self) -> SurfaceId {
         self.layer_surface.wl_surface().into()
+    }
+
+    pub fn viewport_id(&self) -> ViewportId {
+        self.viewport_id
     }
 
     #[inline]
