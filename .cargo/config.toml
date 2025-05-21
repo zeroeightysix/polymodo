@@ -1,0 +1,2 @@
+[alias]
+cli-gen = "build --package cli-gen"

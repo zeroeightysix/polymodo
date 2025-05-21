@@ -7,6 +7,7 @@ mod mode;
 mod polymodo;
 mod windowing;
 mod xdg;
+mod cli;
 
 use crate::ipc::{AppDescription, ServerboundMessage};
 use std::io::ErrorKind;
@@ -19,16 +20,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
-static RUNTIME: OnceLock<tokio::runtime::Handle> = OnceLock::new(); 
-
-/// Multimodal window in the centre of your screen that may do things like launch applications
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-struct Args {
-    /// Do not connect to or launch the polymodo daemon
-    #[arg(long)]
-    standalone: bool,
-}
+static RUNTIME: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 
 /// Some starting time.
 ///
@@ -47,7 +39,7 @@ pub fn runtime() -> tokio::runtime::Handle {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     RUNTIME.set(tokio::runtime::Handle::current()).expect("failed to set the runtime");
-    
+
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::WARN.into())
         .from_env_lossy();
@@ -59,11 +51,11 @@ async fn main() -> anyhow::Result<()> {
 
     log_panics::init();
 
-    let args = Args::parse();
-    
+    let args = cli::Args::parse();
+
     if args.standalone {
         log::info!("Starting standalone polymodo");
-        
+
         run_polymodo_standalone().await;
 
         std::process::exit(0);
