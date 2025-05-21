@@ -49,7 +49,9 @@ fn new_context(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> egui::Co
 
         // keep the handle to this task,
         let abort_handle = tokio::spawn(async move {
-            tokio::time::sleep(info.delay).await;
+            if !info.delay.is_zero() {
+                tokio::time::sleep(info.delay).await;
+            }
 
             let _ = sender.try_send(SurfaceEvent::NeedsRepaintViewport(
                 info.viewport_id,
