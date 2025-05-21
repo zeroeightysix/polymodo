@@ -10,7 +10,7 @@ use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
     static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
@@ -35,41 +35,50 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
 
             // if, for this desktop entry, there exists no SearchRow yet (with comparison being done on the source path)
             if !rows.iter().any(|row| entry.source_path == row.path()) {
-                let icon_resolved: Option<String> = if let Some(icon) = entry.icon.clone() {
-                    // if `Icon` is an absolute path, the image pointed at should be loaded:
-                    if icon.starts_with('/') && std::fs::exists(&icon).unwrap_or(false) {
-                        Some(format!("file://{icon}"))
-                    } else {
-                        // find the icon according to the spec:
-                        let icon_path = linicon::lookup_icon(icon)
-                            .with_scale(1) // TODO: use the surface scale
-                            // .with_size(16) // TODO: not sensible
-                            .filter_map(Result::ok)
-                            .next();
-
-                        icon_path.map(|ip| {
-                            let path = ip.path.to_string_lossy().to_string();
-                            format!("file://{path}")
-                        })
-                    }
-                } else {
-                    None
-                };
-
                 log::debug!(
-                    "new entry {}, icon {:?}",
+                    "new entry {}",
                     entry.source_path.to_string_lossy(),
-                    &icon_resolved
                 );
 
                 // add a new search entry for this desktop entry.
-                rows.push(SearchRow(Arc::new(LauncherEntry {
+                let launcher_entry = Arc::new(LauncherEntry {
                     name: entry.name,
                     path: entry.source_path,
                     exec,
                     icon: entry.icon,
-                    icon_resolved, // TODO
-                })));
+                    icon_resolved: OnceLock::new(),
+                });
+
+                // try locating the icon for this desktop entry, if any, and which may have to be deferred:
+                if let Some(icon) = launcher_entry.icon.as_deref() {
+                    let launcher_entry = launcher_entry.clone();
+                    
+                    // if `Icon` is an absolute path, the image pointed at should be loaded:
+                    if icon.starts_with('/') && std::fs::exists(icon).unwrap_or(false) {
+                        let icon = format!("file://{icon}");
+
+                        let _ = launcher_entry.icon_resolved.set(icon);
+                    } else {
+                        let icon = icon.to_string();
+                        drop(tokio::task::spawn_blocking(move || {
+                            // find the icon according to the spec:
+                            let icon_path = linicon::lookup_icon(icon)
+                                .with_scale(1) // TODO: use the surface scale
+                                // .with_size(16) // TODO: not sensible
+                                .filter_map(Result::ok)
+                                .next();
+
+                            if let Some(icon_path) = icon_path {
+                                let path = icon_path.path.to_string_lossy().to_string();
+                                let path = format!("file://{path}");
+
+                                let _ = launcher_entry.icon_resolved.set(path);
+                            }
+                        }));
+                    }
+                }
+
+                rows.push(SearchRow(launcher_entry));
 
                 // and also add it to the fuzzy searcher
                 let entry = rows.last().unwrap().clone();
@@ -94,7 +103,7 @@ struct LauncherEntry {
     path: PathBuf,
     exec: String,
     icon: Option<String>,
-    icon_resolved: Option<String>,
+    icon_resolved: OnceLock<String>,
 }
 
 impl Launcher {
@@ -369,7 +378,7 @@ impl SearchRow {
     }
 
     fn icon(&self) -> Option<&str> {
-        self.0.icon_resolved.as_deref()
+        self.0.icon_resolved.get().map(|s| s.as_str())
     }
 
     fn path(&self) -> &Path {
