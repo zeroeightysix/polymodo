@@ -47,18 +47,20 @@ fn new_context(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> egui::Co
     context.set_request_repaint_callback(move |info| {
         let sender = surf_driver_event_sender.clone();
 
-        // keep the handle to this task,
-        let abort_handle = tokio::spawn(async move {
-            if !info.delay.is_zero() {
-                tokio::time::sleep(info.delay).await;
-            }
+        // keep the handle to this task
+        // this may run on a file loading thread from egui_extras, so we have to explicitly launch this task on the runtime instead of using tokio::spawn
+        let abort_handle = crate::runtime()
+            .spawn(async move {
+                if !info.delay.is_zero() {
+                    tokio::time::sleep(info.delay).await;
+                }
 
-            let _ = sender.try_send(SurfaceEvent::NeedsRepaintViewport(
-                info.viewport_id,
-                info.current_cumulative_pass_nr,
-            ));
-        })
-        .into();
+                let _ = sender.try_send(SurfaceEvent::NeedsRepaintViewport(
+                    info.viewport_id,
+                    info.current_cumulative_pass_nr,
+                ));
+            })
+            .into();
 
         // because we can safely abort the last one, and store the current (new) task as the last one.
         if let Some(handle) = last_task.lock().unwrap().replace(abort_handle) {
@@ -121,9 +123,11 @@ impl AppSurfaceDriver {
                     .filter(|surf| surf.has_events())
                     .map(|surf| surf.surface_id())
                     .collect::<Vec<_>>();
-                
+
                 for surf_id in ids {
-                    self.with_app_surf_mut(&surf_id, |app, surf| app.request_repaint(surf.viewport_id()))?;
+                    self.with_app_surf_mut(&surf_id, |app, surf| {
+                        app.request_repaint(surf.viewport_id())
+                    })?;
                 }
                 Ok(())
             }
@@ -424,7 +428,7 @@ impl AppSurfaceDriver {
 /// has GATs that make it dyn incompatible.
 pub trait AppDriver {
     fn key(&self) -> AppKey;
-    
+
     fn request_repaint(&self, viewport_id: ViewportId);
 
     fn paint(&mut self, surface: &mut Surface, pass_nr: Option<u64>) -> Result<(), WindowingError>;

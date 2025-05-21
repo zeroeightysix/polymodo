@@ -19,6 +19,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
+static RUNTIME: OnceLock<tokio::runtime::Handle> = OnceLock::new(); 
+
 /// Multimodal window in the centre of your screen that may do things like launch applications
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -36,8 +38,16 @@ pub fn start_time() -> Instant {
     *LOCK.get_or_init(Instant::now)
 }
 
+/// Returns a handle to the application's tokio runtime, to be used to spawn tasks
+/// from threads not handled by tokio.
+pub fn runtime() -> tokio::runtime::Handle {
+    RUNTIME.get().cloned().expect("the runtime wasn't set")
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
+    RUNTIME.set(tokio::runtime::Handle::current()).expect("failed to set the runtime");
+    
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::WARN.into())
         .from_env_lossy();
