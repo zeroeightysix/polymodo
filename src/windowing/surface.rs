@@ -99,7 +99,7 @@ impl Surface {
             })
             .forget_lifetime();
 
-        let output = self.update(ctx, render_ui);
+        let output = self.run_ui(ctx, render_ui);
 
         let prims = ctx.tessellate(output.shapes, output.pixels_per_point);
         {
@@ -143,7 +143,7 @@ impl Surface {
         Ok(output.platform_output)
     }
 
-    fn update(
+    fn run_ui(
         &mut self,
         ctx: &Context,
         render_ui: impl FnMut(&Context) + Sized,
