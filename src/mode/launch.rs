@@ -116,6 +116,9 @@ impl Launcher {
             response.request_focus();
         }
 
+        // add some spacing between the search field and the results
+        ui.add_space(ui.style().spacing.item_spacing.y);
+
         let scroll = {
             // if up/down has been pressed, adjust the selected entry
             if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
@@ -348,6 +351,7 @@ pub enum Message {
     Search,
 }
 
+/// Arc around a [LauncherEntry], meant to be shareable between the fuzzy matcher and UI.
 #[derive(Clone, Debug)]
 struct SearchRow(pub Arc<LauncherEntry>);
 
