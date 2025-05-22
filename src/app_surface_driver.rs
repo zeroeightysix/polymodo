@@ -72,6 +72,12 @@ fn new_context(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> egui::Co
     // egui requires us to opt into the different type of image loaders, which we do here:
     egui_extras::install_image_loaders(&context);
 
+    const ZOOM_FACTOR: f32 = 2.0;
+
+    context.style_mut(|style| for (_, font_id) in style.text_styles.iter_mut() {
+        font_id.size *= ZOOM_FACTOR;
+    });
+
     context
 }
 

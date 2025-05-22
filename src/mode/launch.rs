@@ -69,7 +69,7 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
                             // find the icon according to the spec:
                             let icon_path = linicon::lookup_icon(icon)
                                 .with_scale(1) // TODO: use the surface scale
-                                // .with_size(16) // TODO: not sensible
+                                .with_size(32) // TODO: not sensible
                                 .filter_map(Result::ok)
                                 .next();
 
@@ -115,8 +115,8 @@ impl Launcher {
     pub fn layer_surface_options() -> LayerSurfaceOptions<'static> {
         LayerSurfaceOptions {
             namespace: Some("polymodo"),
-            width: 350,
-            height: 400,
+            width: 500,
+            height: 600,
             ..Default::default()
         }
     }
@@ -202,7 +202,7 @@ impl Launcher {
 
                         if let Some(icon) = entry.icon() {
                             egui::Image::new(icon)
-                                .fit_to_exact_size(Vec2::splat(16.0))
+                                .fit_to_exact_size(Vec2::splat(32.0))
                                 .ui(ui);
                         }
 
