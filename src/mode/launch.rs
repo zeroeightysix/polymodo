@@ -32,6 +32,11 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
             let Some(exec) = entry.exec else {
                 continue;
             };
+            
+            // an entry with `NoDisplay=true` does not qualify to be shown in the launcher
+            if entry.no_display == Some(true) {
+                continue;
+            }
 
             // if, for this desktop entry, there exists no SearchRow yet (with comparison being done on the source path)
             if !rows.iter().any(|row| entry.source_path == row.path()) {

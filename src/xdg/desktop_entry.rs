@@ -17,6 +17,7 @@ pub struct DesktopEntry {
     pub generic_name: Option<String>,
     pub comment: Option<String>,
     pub icon: Option<String>,
+    pub no_display: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, strum::EnumString)]
@@ -53,6 +54,7 @@ pub fn load(path: impl AsRef<Path>) -> anyhow::Result<DesktopEntry> {
     let comment = main_section.get("Comment");
     let exec = main_section.get("Exec");
     let icon = main_section.get("Icon");
+    let no_display = main_section.get("NoDisplay").and_then(|s| s.parse().ok());
 
     Ok(DesktopEntry {
         source_path: path.to_path_buf(),
@@ -63,6 +65,7 @@ pub fn load(path: impl AsRef<Path>) -> anyhow::Result<DesktopEntry> {
         generic_name: generic_name.map(|s| s.to_string()),
         comment: comment.map(|s| s.to_string()),
         icon: icon.map(|s| s.to_string()),
+        no_display,
     })
 }
 
