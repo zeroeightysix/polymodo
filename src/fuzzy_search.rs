@@ -51,7 +51,7 @@ impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
         self.nucleo.pattern.reparse(
             COL,
             query.as_str(),
-            nucleo::pattern::CaseMatching::Smart,
+            nucleo::pattern::CaseMatching::Ignore,
             nucleo::pattern::Normalization::Never,
             append,
         );
