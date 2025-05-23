@@ -74,6 +74,7 @@ fn new_context(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> egui::Co
 
     const ZOOM_FACTOR: f32 = 2.0;
 
+    context.set_theme(egui::Theme::Light);
     context.style_mut(|style| for (_, font_id) in style.text_styles.iter_mut() {
         font_id.size *= ZOOM_FACTOR;
     });
