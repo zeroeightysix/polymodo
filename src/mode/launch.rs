@@ -3,8 +3,8 @@ use crate::windowing::app::{App, AppSender, AppSetup};
 use crate::windowing::surface::LayerSurfaceOptions;
 use crate::xdg::find_desktop_entries;
 use anyhow::anyhow;
-use egui::{RichText, Vec2, Widget};
-use egui_extras::{Column, TableBuilder};
+use egui::{Color32, CornerRadius, Response, Widget};
+use egui_virtual_list::VirtualList;
 use nucleo::Utf32String;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
@@ -32,7 +32,7 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
             let Some(exec) = entry.exec else {
                 continue;
             };
-            
+
             // an entry with `NoDisplay=true` does not qualify to be shown in the launcher
             if entry.no_display == Some(true) {
                 continue;
@@ -40,10 +40,7 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
 
             // if, for this desktop entry, there exists no SearchRow yet (with comparison being done on the source path)
             if !rows.iter().any(|row| entry.source_path == row.path()) {
-                log::debug!(
-                    "new entry {}",
-                    entry.source_path.to_string_lossy(),
-                );
+                log::debug!("new entry {}", entry.source_path.to_string_lossy(),);
 
                 // add a new search entry for this desktop entry.
                 let launcher_entry = Arc::new(LauncherEntry {
@@ -57,7 +54,7 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
                 // try locating the icon for this desktop entry, if any, and which may have to be deferred:
                 if let Some(icon) = launcher_entry.icon.as_deref() {
                     let launcher_entry = launcher_entry.clone();
-                    
+
                     // if `Icon` is an absolute path, the image pointed at should be loaded:
                     if icon.starts_with('/') && std::fs::exists(icon).unwrap_or(false) {
                         let icon = format!("file://{icon}");
@@ -97,8 +94,9 @@ pub struct Launcher {
     search_input: String,
     focus_search: bool,
     search: FuzzySearch<1, SearchRow>,
-    show_entries: Vec<SearchRow>,
+    results: Vec<SearchRow>,
     selected_entry_idx: usize,
+    list: VirtualList,
     finish: Option<tokio::sync::oneshot::Sender<<Self as App>::Output>>,
 }
 
@@ -122,40 +120,10 @@ impl Launcher {
     }
 
     fn app_launcher_ui(&mut self, ui: &mut egui::Ui) {
-        let response = egui::TextEdit::singleline(&mut self.search_input)
-            .desired_width(f32::INFINITY)
-            .show(ui)
-            .response;
-        if std::mem::replace(&mut self.focus_search, false) {
-            response.request_focus();
-        }
-
-        // add some spacing between the search field and the results
-        ui.add_space(ui.style().spacing.item_spacing.y);
-
-        let scroll = {
-            // if up/down has been pressed, adjust the selected entry
-            if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
-                self.selected_entry_idx = (self.selected_entry_idx + 1) % self.show_entries.len();
-
-                true
-            } else if ui.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
-                if self.selected_entry_idx == 0 {
-                    self.selected_entry_idx = self.show_entries.len() - 1;
-                } else {
-                    self.selected_entry_idx =
-                        (self.selected_entry_idx.saturating_sub(1)) % self.show_entries.len();
-                }
-
-                true
-            } else {
-                // the selected entry didn't change, so we shouldn't scroll to its row.
-                false
-            }
-        };
+        let text_edit_rsp = self.show_search_text_edit(ui);
 
         // if the text input has changed,
-        if response.changed() {
+        if text_edit_rsp.changed() {
             // make a new search.
             self.search.search::<0>(self.search_input.as_str());
             // and reset the selection
@@ -163,60 +131,124 @@ impl Launcher {
             // adjust the selection to "follow" it.
             self.selected_entry_idx = 0;
         }
+        
+        // if there's no results, don't show anything.
+        if self.results.is_empty() {
+            return;
+        }
+
+        ui.separator();
+
+        self.show_results(ui);
+        
+        let _scroll = {
+            // if up/down has been pressed, adjust the selected entry
+            if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
+                self.selected_entry_idx = (self.selected_entry_idx + 1) % self.results.len();
+        
+                true
+            } else if ui.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
+                if self.selected_entry_idx == 0 {
+                    self.selected_entry_idx = self.results.len() - 1;
+                } else {
+                    self.selected_entry_idx =
+                        (self.selected_entry_idx.saturating_sub(1)) % self.results.len();
+                }
+        
+                true
+            } else {
+                // the selected entry didn't change, so we shouldn't scroll to its row.
+                false
+            }
+        };
+        
         // if enter was pressed (within the textedit)
-        if response.lost_focus()
+        if text_edit_rsp.lost_focus()
             && ui.input(|i| i.key_pressed(egui::Key::Enter))
-            && !self.show_entries.is_empty()
+            && !self.results.is_empty()
         {
-            let entry = self.show_entries.get(self.selected_entry_idx);
+            let entry = self.results.get(self.selected_entry_idx);
             if let Some(entry) = entry.map(|e| e.0.as_ref()) {
                 if let Err(e) = launch(entry) {
                     log::error!("failed to launch with error {e}");
                 }
-
+        
                 self.finish();
             }
         }
+    }
 
-        let remainder = ui.available_height();
-        let row_height = ui.text_style_height(&egui::TextStyle::Body);
+    fn show_search_text_edit(&mut self, ui: &mut egui::Ui) -> Response {
+        ui.horizontal(|ui| {
+            ui.label("🔍"); // TODO: vertical center (line_height = row_height + margin)
 
-        let mut table = TableBuilder::new(ui)
-            .column(Column::remainder())
-            .animate_scrolling(false)
-            .min_scrolled_height(remainder);
-        if scroll {
-            table = table.scroll_to_row(self.selected_entry_idx, None);
-        }
-        table.body(|body| {
-            body.rows(row_height, self.show_entries.len(), |mut row| {
-                let idx = row.index();
-                let entry = &self.show_entries[idx];
-                let checked = self.selected_entry_idx == idx;
-                row.col(|ui| {
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        let mut text = RichText::new(entry.name());
-                        if checked {
-                            text = text.strong();
+            let text_edit = egui::TextEdit::singleline(&mut self.search_input)
+                .desired_width(f32::INFINITY)
+                .frame(false)
+                .hint_text("Search")
+                .show(ui)
+                .response;
+
+            if std::mem::replace(&mut self.focus_search, false) {
+                text_edit.request_focus();
+            }
+
+            text_edit
+        })
+        .inner
+    }
+
+    fn show_results(&mut self, ui: &mut egui::Ui) {
+        let results = &self.results;
+        let list = &mut self.list;
+
+        egui::ScrollArea::vertical()
+            .min_scrolled_height(500.0) // TODO: ui.available_height() is 0; why?
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+
+                list.ui_custom_layout(ui, results.len(), |ui, start_idx| {
+                    let mut items_shown = 0;
+                    #[allow(clippy::needless_range_loop)]
+                    for idx in start_idx..results.len() {
+                        let result = &results[idx];
+                        
+                        fn display_result(result: &SearchRow, ui: &mut egui::Ui) {
+                            ui.horizontal(|ui| {
+                                if let Some(icon) = result.icon() {
+                                    egui::Image::new(icon)
+                                        .fit_to_exact_size(egui::Vec2::splat(32.0))
+                                        .ui(ui);
+                                }
+
+                                ui.label(result.name());
+                            });
+                        }
+                        
+                        if self.selected_entry_idx == idx {
+                            egui::Frame::new()
+                                .fill(Color32::from_black_alpha(40))
+                                .outer_margin(egui::Margin::same(-2))
+                                .inner_margin(egui::Margin::same(2))
+                                .corner_radius(8.0)
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    display_result(result, ui);
+                                });
+                        } else {
+                            display_result(result, ui);
                         }
 
-                        if let Some(icon) = entry.icon() {
-                            egui::Image::new(icon)
-                                .fit_to_exact_size(Vec2::splat(32.0))
-                                .ui(ui);
-                        }
+                        items_shown += 1;
 
-                        let label = ui.label(text);
-                        if label.clicked() {
-                            self.selected_entry_idx = idx;
+                        if ui.available_height() <= 0.0 {
+                            break;
                         }
-                        if label.hovered() {
-                            label.highlight();
-                        }
-                    });
+                    }
+
+                    items_shown
                 });
-            })
-        });
+            });
     }
 
     fn finish(&mut self) {
@@ -250,8 +282,9 @@ impl App for Launcher {
             focus_search: true,
             // desktop_entries,
             search,
-            show_entries: Vec::new(),
+            results: Vec::new(),
             selected_entry_idx: 0,
+            list: Default::default(),
             finish: Some(finish),
         };
 
@@ -280,7 +313,7 @@ impl App for Launcher {
         match message {
             Message::Search => {
                 self.search.tick();
-                self.show_entries = self.search.get_matches().into_iter().cloned().collect();
+                self.results = self.search.get_matches().into_iter().cloned().collect();
             }
         }
     }
@@ -288,8 +321,12 @@ impl App for Launcher {
     fn render(&mut self, ctx: &egui::Context) {
         let mut frame = egui::Frame::window(&ctx.style());
         frame.shadow.offset[1] = frame.shadow.offset[0];
+        frame.fill = Color32::from_white_alpha(210);
+        frame.inner_margin = egui::Margin::same(8);
+        frame.corner_radius = CornerRadius::same(16);
 
-        egui::CentralPanel::default()
+        egui::TopBottomPanel::top("top_panel")
+            .max_height(600.0)
             .frame(frame.outer_margin((frame.shadow.blur + frame.shadow.spread + 1) as f32))
             .show(ctx, |ui| {
                 self.app_launcher_ui(ui);

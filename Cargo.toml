@@ -28,6 +28,8 @@ wgpu = "24.0.1"
 egui = "0.31.0"
 egui-wgpu = "0.31.0"
 egui_extras = { version = "0.31.1", features = ["file", "image", "svg"] }
+egui_flex = "0.3.0"
+egui_virtual_list = "0.7.0"
 image = { version = "0.25", features = ["jpeg", "png"] }
 
 # Launcher
