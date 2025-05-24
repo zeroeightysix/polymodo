@@ -16,6 +16,8 @@ pub type IpcS2C = IpcClient<ServerboundMessage, ClientboundMessage>;
 #[derive(Debug, Decode, Encode)]
 pub enum ServerboundMessage {
     Ping,
+    /// Is an app with this type already running?
+    IsRunning(String),
     Spawn(AppDescription),
     Goodbye,
 }
@@ -28,6 +30,8 @@ pub enum AppDescription {
 #[derive(Debug, Decode, Encode)]
 pub enum ClientboundMessage {
     Pong,
+    /// Yes/no, an app with that type name is already running
+    Running(String, bool),
     AppResult(String), // TODO: apps return much prettier things than String. This could be type-safe, but requires a bit of thought.
 }
 

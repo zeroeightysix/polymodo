@@ -9,7 +9,7 @@ mod polymodo;
 mod windowing;
 mod xdg;
 
-use crate::ipc::{AppDescription, ServerboundMessage};
+use crate::ipc::{AppDescription, ClientboundMessage, ServerboundMessage};
 use clap::Parser;
 use std::io::ErrorKind;
 use std::sync::OnceLock;
@@ -19,6 +19,7 @@ use tracing::metadata::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
+use crate::mode::launch::Launcher;
 
 static RUNTIME: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 
@@ -38,20 +39,7 @@ pub fn runtime() -> tokio::runtime::Handle {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    RUNTIME
-        .set(tokio::runtime::Handle::current())
-        .expect("failed to set the runtime");
-
-    let env_filter = EnvFilter::builder()
-        .with_default_directive(LevelFilter::WARN.into())
-        .from_env_lossy();
-
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
-        .with(env_filter)
-        .try_init()?;
-
-    log_panics::init();
+    setup()?;
 
     let args = cli::Args::parse();
 
@@ -67,6 +55,23 @@ async fn main() -> anyhow::Result<()> {
     match ipc::connect_to_polymodo_daemon().await {
         Ok(client) => {
             // ok, we have a client, let's talk with the server!
+
+            // did we request a single app instance?
+            if args.single {
+                client.send(ServerboundMessage::IsRunning(std::any::type_name::<Launcher>().to_string())).await
+                    .expect("failed to send");
+                let message = client.recv().await.expect("failed to recv");
+
+                match message {
+                    ClientboundMessage::Running(name, false) if name == std::any::type_name::<Launcher>() => {
+                        // ok!
+                    }
+                    _ => {
+                        println!("App already running!");
+                        return Ok(());
+                    }
+                }
+            }
 
             client
                 .send(ServerboundMessage::Spawn(AppDescription::Launcher))
@@ -99,6 +104,24 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn setup() -> anyhow::Result<()> {
+    RUNTIME
+        .set(tokio::runtime::Handle::current())
+        .expect("failed to set the runtime");
+
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::WARN.into())
+        .from_env_lossy();
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(env_filter)
+        .try_init()?;
+
+    log_panics::init();
     Ok(())
 }
 

@@ -351,6 +351,11 @@ impl AppSurfaceDriver {
         }
     }
 
+    /// Is an App of the type `A` running on this AppSurfaceDriver?
+    fn is_running(&self, id: &str) -> bool {
+        self.apps.iter().any(|app| app.app_type() == id)
+    }
+
     fn on_app_message(
         &mut self,
         app_key: AppKey,
@@ -449,7 +454,7 @@ impl AppSurfaceDriver {
 pub trait AppDriver {
     fn key(&self) -> AppKey;
 
-    fn app_type(&self) -> std::any::TypeId;
+    fn app_type(&self) -> &'static str;
 
     fn request_repaint(&self, viewport_id: ViewportId);
 
@@ -476,8 +481,8 @@ where
         self.key
     }
 
-    fn app_type(&self) -> std::any::TypeId {
-        std::any::TypeId::of::<A>()
+    fn app_type(&self) -> &'static str {
+        std::any::type_name::<A>()
     }
 
     fn request_repaint(&self, viewport_id: ViewportId) {
@@ -563,6 +568,10 @@ pub fn create_surface_driver_task(
                         log::error!("could not deliver message to app {app_key}; this is a bug.");
                     }
                 }
+                AppEvent::AppExistsQuery { app_type_id, response } => {
+                    let running = driver.is_running(&app_type_id);
+                    let _ = response.send(running);
+                }
             }
         }
 
@@ -600,6 +609,12 @@ pub enum AppEvent {
         app_key: AppKey,
         message: Box<dyn std::any::Any>,
     },
+    /// A query asking if an app with a given type id is running, along with a channel for the
+    /// response.
+    AppExistsQuery {
+        app_type_id: String,
+        response: tokio::sync::oneshot::Sender<bool>,
+    }
 }
 
 #[derive(Debug, Clone)]

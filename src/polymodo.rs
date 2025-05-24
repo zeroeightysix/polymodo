@@ -27,12 +27,10 @@ impl Polymodo {
         let AppSetup { app, mut effects } = A::create(send);
         let driver = create_app_driver(key, app, self.surf_driver_event_sender.clone());
 
-        self.surf_driver_app_sender
-            .send(AppEvent::NewApp {
-                app_driver: Box::new(driver),
-                layer_surface_options: Launcher::layer_surface_options(),
-            })
-            .expect("failed to spawn new app; thus the app driver is dead; polymodo cannot function anymore.");
+        self.send_app_event(AppEvent::NewApp {
+            app_driver: Box::new(driver),
+            layer_surface_options: Launcher::layer_surface_options(),
+        });
 
         tokio::task::spawn_local(async move {
             let output = effects.join_next().await.unwrap().unwrap(); // TODO: we need an abstraction on AppSetup to guarantee an effect
@@ -46,6 +44,11 @@ impl Polymodo {
             output
             // TODO: handle output
         })
+    }
+
+    fn send_app_event(&self, app_event: AppEvent) {
+        self.surf_driver_app_sender.send(app_event)
+            .expect("failed to spawn new app; thus the app driver is dead; polymodo cannot function anymore.");
     }
 }
 
@@ -147,6 +150,21 @@ async fn serve_client(polymodo: Rc<Polymodo>, client: IpcS2C) {
 
         let _ = match message {
             ServerboundMessage::Ping => client.send(ClientboundMessage::Pong).await,
+            ServerboundMessage::IsRunning(type_id) => {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                polymodo.send_app_event(AppEvent::AppExistsQuery {
+                    app_type_id: type_id.clone(),
+                    response: tx,
+                });
+
+                let running = rx.await.expect("sender half closed");
+
+                if let Err(e) = client.send(ClientboundMessage::Running(type_id, running)).await {
+                    log::error!("failed to reply to client: {e}");
+                }
+
+                Ok(())
+            }
             ServerboundMessage::Spawn(AppDescription::Launcher) => {
                 let result = polymodo.spawn_app::<Launcher>();
                 let client = client.clone();
