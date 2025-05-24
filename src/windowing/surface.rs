@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use crate::start_time;
 use crate::windowing::{convert, WindowingError};
 use egui::{Context, Rect, ViewportId};
@@ -39,7 +40,7 @@ pub struct Surface {
     modifiers: egui::Modifiers,
 
     wgpu_surface: wgpu::Surface<'static>,
-    render_state: RenderState,
+    render_state: Arc<RenderState>,
 }
 
 impl Surface {
@@ -48,7 +49,7 @@ impl Surface {
         size: (u32, u32),
         layer_surface: LayerSurface,
         wgpu_surface: wgpu::Surface<'static>,
-        render_state: RenderState,
+        render_state: Arc<RenderState>,
         fractional_scale: WpFractionalScaleV1,
         viewport: WpViewport,
     ) -> Self {

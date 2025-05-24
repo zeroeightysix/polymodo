@@ -26,6 +26,7 @@ use smithay_client_toolkit::{
 };
 use std::ffi::c_void;
 use std::ptr::NonNull;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc;
 use wayland_backend::client;
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1;
@@ -233,24 +234,33 @@ impl SurfaceSetup {
                     )),
                 })?
         };
-
-        // set up the egui render state
-        let render_state = RenderState::create(
-            &wgpu_options,
-            &self.instance,
-            Some(&wgpu_surface),
-            None,
-            1,
-            true,
-        )
-        .await?;
+        
+        let render_state = self.render_state.get();
+        
+        let render_state = match render_state {
+            None => {
+                // set up the egui render state
+                let render_state = RenderState::create(
+                    &wgpu_options,
+                    &self.instance,
+                    Some(&wgpu_surface),
+                    None,
+                    1,
+                    true,
+                ).await?;
+                let _ = self.render_state.set(Arc::new(render_state));
+                
+                self.render_state.get().unwrap()
+            }
+            Some(render_state) => render_state
+        };
 
         let surface = Surface::create(
             viewport_id,
             (width, height),
             layer_surface,
             wgpu_surface,
-            render_state,
+            render_state.clone(),
             fractional_scale,
             viewport,
         );
