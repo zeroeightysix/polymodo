@@ -12,9 +12,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
 
-fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
-    static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
+static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
 
+fn copy_desktop_entry_cache() -> Vec<SearchRow> {
+    let rows = DESKTOP_ENTRIES.lock().unwrap();
+
+    rows.clone()
+}
+
+fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
     // immediately push cached entries
     {
         let rows = DESKTOP_ENTRIES.lock().unwrap();
@@ -275,6 +281,8 @@ impl App for Launcher {
 
         let (finish, finish_recv) = tokio::sync::oneshot::channel();
 
+        let entries = copy_desktop_entry_cache();
+
         tokio::task::spawn_blocking(move || scour_desktop_entries(pusher));
 
         let launcher = Launcher {
@@ -282,7 +290,7 @@ impl App for Launcher {
             focus_search: true,
             // desktop_entries,
             search,
-            results: Vec::new(),
+            results: entries,
             selected_entry_idx: 0,
             list: Default::default(),
             finish: Some(finish),
