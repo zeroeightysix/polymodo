@@ -381,7 +381,7 @@ impl AppSurfaceDriver {
 
         for surface in &mut self.surfaces {
             if ids.contains(&&surface.surface_id()) {
-                driver.request_repaint(surface.viewport_id());
+                driver.paint(surface, None)?
             }
         }
 
