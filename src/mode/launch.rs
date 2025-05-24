@@ -328,6 +328,7 @@ impl App for Launcher {
         egui::TopBottomPanel::top("top_panel")
             .max_height(600.0)
             .frame(frame.outer_margin((frame.shadow.blur + frame.shadow.spread + 1) as f32))
+            .show_separator_line(false)
             .show(ctx, |ui| {
                 self.app_launcher_ui(ui);
             });
