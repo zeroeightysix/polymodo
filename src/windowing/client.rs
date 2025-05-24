@@ -36,6 +36,7 @@ use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1:
 use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 use wgpu::rwh::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle};
+use crate::app_surface_driver::AppKey;
 
 pub struct WaylandClient {
     connection: Connection,
@@ -83,7 +84,7 @@ impl WaylandClient {
 
         // create the wgpu instance from provided setup config
         let instance = wgpu_setup.new_instance().await;
-
+        
         Ok(SurfaceSetup {
             backend: self.connection.backend(),
             qh,
@@ -92,6 +93,7 @@ impl WaylandClient {
             layer_shell,
             fractional_scale_manager,
             viewporter,
+            render_state: OnceLock::new(),
         })
     }
 
@@ -161,7 +163,7 @@ pub enum SurfaceEvent {
     NeedsRepaintSurface(SurfaceId),
     /// Sent when a repaint is requested from egui. This includes the cumulative pass number,
     /// which should be compared with [egui::Context::cumulative_pass_nr] and be ignored if it is lower.
-    NeedsRepaintViewport(ViewportId, u64),
+    NeedsRepaintViewport(AppKey, ViewportId, u64),
     Closed(SurfaceId),
     Configure(SurfaceId, LayerSurfaceConfigure),
     KeyboardFocus(SurfaceId, bool),
@@ -184,6 +186,7 @@ pub struct SurfaceSetup {
     layer_shell: LayerShell,
     fractional_scale_manager: WpFractionalScaleManagerV1,
     viewporter: WpViewporter,
+    render_state: OnceLock<Arc<RenderState>>,
 }
 
 impl SurfaceSetup {

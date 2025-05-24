@@ -321,7 +321,7 @@ impl App for Launcher {
     fn render(&mut self, ctx: &egui::Context) {
         let mut frame = egui::Frame::window(&ctx.style());
         frame.shadow.offset[1] = frame.shadow.offset[0];
-        frame.fill = Color32::from_white_alpha(210);
+        frame.fill = Color32::from_black_alpha(210);
         frame.inner_margin = egui::Margin::same(8);
         frame.corner_radius = CornerRadius::same(16);
 

@@ -27,12 +27,12 @@ where
     AppDriverImpl {
         key,
         app,
-        ctx: new_context(surf_driver_event_sender),
+        ctx: new_context(key, surf_driver_event_sender),
         last_rendered_pass: Cell::new(0),
     }
 }
 
-fn new_context(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> egui::Context {
+fn new_context(for_key: AppKey, surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> egui::Context {
     let context = egui::Context::default();
     // the previous repaint task, if any.
     // note that this uses LiveHandle, meaning that if the `Context` is dropped, it drops the callback,
@@ -56,6 +56,7 @@ fn new_context(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> egui::Co
                 }
 
                 let _ = sender.try_send(SurfaceEvent::NeedsRepaintViewport(
+                    for_key,
                     info.viewport_id,
                     info.current_cumulative_pass_nr,
                 ));
@@ -74,7 +75,7 @@ fn new_context(surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> egui::Co
 
     const ZOOM_FACTOR: f32 = 2.0;
 
-    context.set_theme(egui::Theme::Light);
+    context.set_theme(egui::Theme::Dark);
     context.style_mut(|style| for (_, font_id) in style.text_styles.iter_mut() {
         font_id.size *= ZOOM_FACTOR;
     });
@@ -139,9 +140,9 @@ impl AppSurfaceDriver {
                 Ok(())
             }
             SurfaceEvent::NeedsRepaintSurface(id) => self.paint(&id, None),
-            SurfaceEvent::NeedsRepaintViewport(vid, pass_nr) => {
+            SurfaceEvent::NeedsRepaintViewport(key, vid, pass_nr) => {
                 let id = self
-                    .surface_id_by_viewport_id(vid)
+                    .surface_id_by_viewport_id(key, vid)
                     .context("No such surface")?;
                 self.paint(&id, Some(pass_nr))?;
                 Ok(())
@@ -207,15 +208,16 @@ impl AppSurfaceDriver {
             }
             SurfaceEvent::RepeatKey(id, text, key) => {
                 // same as above ^^
-                let surface = self.surface_by_id(&id).context("No such surface")?;
-                if let Some(text) = text {
-                    surface.push_event(egui::Event::Text(text));
-                }
-                if let Some(key) = key {
-                    surface.on_key(key, true, true);
-                }
+                self.with_app_surf_mut(&id, |app, surface| {
+                    if let Some(text) = text {
+                        surface.push_event(egui::Event::Text(text));
+                    }
+                    if let Some(key) = key {
+                        surface.on_key(key, true, true);
+                    }
 
-                self.paint(&id, None)
+                    app.request_repaint(surface.viewport_id());
+                })
             }
             SurfaceEvent::ReleaseKey(_, None) => {
                 // no key -> ignore
@@ -365,9 +367,10 @@ impl AppSurfaceDriver {
             .filter(|(_, key)| *key == app_key)
             .map(|(fid, _)| &fid.surface_id)
             .collect::<Vec<_>>();
+        
         for surface in &mut self.surfaces {
             if ids.contains(&&surface.surface_id()) {
-                driver.paint(surface, None)?
+                driver.request_repaint(surface.viewport_id());
             }
         }
 
@@ -421,10 +424,10 @@ impl AppSurfaceDriver {
             .find(|surf| &surf.surface_id() == surface_id)
     }
 
-    fn surface_id_by_viewport_id(&self, viewport_id: ViewportId) -> Option<SurfaceId> {
+    fn surface_id_by_viewport_id(&self, app_key: AppKey, viewport_id: ViewportId) -> Option<SurfaceId> {
         self.app_surface_map
             .iter()
-            .find(|(fid, _)| fid.viewport_id == viewport_id)
+            .find(|(fid, key)| app_key == *key && fid.viewport_id == viewport_id)
             .map(|(fid, _)| fid.surface_id.clone())
     }
 }
