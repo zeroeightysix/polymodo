@@ -67,7 +67,7 @@ pub async fn run_server() -> anyhow::Result<std::convert::Infallible> {
 
 pub async fn run_standalone() -> anyhow::Result<()> {
     let (poly, _dispatch_task) = setup().await?;
-    
+
     // The output of the app launched is used as the return value for the standalone run:
     poly.spawn_app::<Launcher>().await?
 }
@@ -120,7 +120,10 @@ fn create_server_task(
 
             // explicit drop: dropping a JoinHandle does not cancel the task;
             // we're simply not interested in ever joining this task
-            drop(tokio::task::spawn_local(serve_client(Rc::clone(&polymodo), client)));
+            drop(tokio::task::spawn_local(serve_client(
+                Rc::clone(&polymodo),
+                client,
+            )));
         }
     })
 }

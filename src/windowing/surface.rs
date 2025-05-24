@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use crate::start_time;
 use crate::windowing::{convert, WindowingError};
 use egui::{Context, Rect, ViewportId};
@@ -8,6 +7,7 @@ use smithay_client_toolkit::seat::pointer::PointerEvent;
 use smithay_client_toolkit::seat::pointer::PointerEventKind::*;
 use smithay_client_toolkit::shell::wlr_layer::{Anchor, Layer, LayerSurface};
 use smithay_client_toolkit::shell::WaylandSurface;
+use std::sync::Arc;
 use wayland_backend::client::ObjectId;
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::WpFractionalScaleV1;
 use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;

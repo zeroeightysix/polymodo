@@ -1,8 +1,8 @@
 use clap::{Command, CommandFactory, ValueEnum};
 use clap_complete::shells;
+use shells::Shell;
 use std::io::Error;
 use std::path::Path;
-use shells::Shell;
 
 include!("../src/cli.rs");
 
@@ -16,13 +16,13 @@ fn main() -> Result<(), Error> {
     let outdir = outdir.join("../../../").canonicalize().unwrap();
 
     let mut cmd: Command = Args::command();
-    
+
     // shell completions:
     for &shell in Shell::value_variants() {
         let path = clap_complete::generate_to(shell, &mut cmd, "polymodo", &outdir)?;
         println!("cargo:warning=completion file for {shell} is generated: {path:?}");
     }
-    
+
     // manpage:
     let man = clap_mangen::Man::new(cmd);
     let mut buf: Vec<u8> = vec![];

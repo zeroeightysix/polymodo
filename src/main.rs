@@ -1,4 +1,5 @@
 mod app_surface_driver;
+mod cli;
 mod config;
 mod fuzzy_search;
 mod ipc;
@@ -7,13 +8,12 @@ mod mode;
 mod polymodo;
 mod windowing;
 mod xdg;
-mod cli;
 
 use crate::ipc::{AppDescription, ServerboundMessage};
+use clap::Parser;
 use std::io::ErrorKind;
 use std::sync::OnceLock;
 use std::time::Instant;
-use clap::Parser;
 use tokio::task::LocalSet;
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -38,7 +38,9 @@ pub fn runtime() -> tokio::runtime::Handle {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    RUNTIME.set(tokio::runtime::Handle::current()).expect("failed to set the runtime");
+    RUNTIME
+        .set(tokio::runtime::Handle::current())
+        .expect("failed to set the runtime");
 
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::WARN.into())
@@ -73,7 +75,10 @@ async fn main() -> anyhow::Result<()> {
 
             println!("{:?}", client.recv().await);
 
-            client.send(ServerboundMessage::Goodbye).await.expect("send failed");
+            client
+                .send(ServerboundMessage::Goodbye)
+                .await
+                .expect("send failed");
             client.shutdown().await.expect("shutdown failed");
         }
         Err(err) if err.kind() == ErrorKind::ConnectionRefused => {

@@ -1,3 +1,4 @@
+use crate::app_surface_driver::AppKey;
 use crate::windowing::client::SurfaceEvent::NeedsRepaintSurface;
 use crate::windowing::convert::keysym_to_key;
 use crate::windowing::surface::{LayerSurfaceOptions, ScaleFactor, Surface, SurfaceId};
@@ -36,7 +37,6 @@ use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1:
 use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 use wgpu::rwh::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle};
-use crate::app_surface_driver::AppKey;
 
 pub struct WaylandClient {
     connection: Connection,
@@ -84,7 +84,7 @@ impl WaylandClient {
 
         // create the wgpu instance from provided setup config
         let instance = wgpu_setup.new_instance().await;
-        
+
         Ok(SurfaceSetup {
             backend: self.connection.backend(),
             qh,
@@ -237,9 +237,9 @@ impl SurfaceSetup {
                     )),
                 })?
         };
-        
+
         let render_state = self.render_state.get();
-        
+
         let render_state = match render_state {
             None => {
                 // set up the egui render state
@@ -250,12 +250,13 @@ impl SurfaceSetup {
                     None,
                     1,
                     true,
-                ).await?;
+                )
+                .await?;
                 let _ = self.render_state.set(Arc::new(render_state));
-                
+
                 self.render_state.get().unwrap()
             }
-            Some(render_state) => render_state
+            Some(render_state) => render_state,
         };
 
         let surface = Surface::create(

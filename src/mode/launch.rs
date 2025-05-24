@@ -131,7 +131,7 @@ impl Launcher {
             // adjust the selection to "follow" it.
             self.selected_entry_idx = 0;
         }
-        
+
         // if there's no results, don't show anything.
         if self.results.is_empty() {
             return;
@@ -140,12 +140,12 @@ impl Launcher {
         ui.separator();
 
         self.show_results(ui);
-        
+
         let _scroll = {
             // if up/down has been pressed, adjust the selected entry
             if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
                 self.selected_entry_idx = (self.selected_entry_idx + 1) % self.results.len();
-        
+
                 true
             } else if ui.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
                 if self.selected_entry_idx == 0 {
@@ -154,14 +154,14 @@ impl Launcher {
                     self.selected_entry_idx =
                         (self.selected_entry_idx.saturating_sub(1)) % self.results.len();
                 }
-        
+
                 true
             } else {
                 // the selected entry didn't change, so we shouldn't scroll to its row.
                 false
             }
         };
-        
+
         // if enter was pressed (within the textedit)
         if text_edit_rsp.lost_focus()
             && ui.input(|i| i.key_pressed(egui::Key::Enter))
@@ -172,7 +172,7 @@ impl Launcher {
                 if let Err(e) = launch(entry) {
                     log::error!("failed to launch with error {e}");
                 }
-        
+
                 self.finish();
             }
         }
@@ -212,7 +212,7 @@ impl Launcher {
                     #[allow(clippy::needless_range_loop)]
                     for idx in start_idx..results.len() {
                         let result = &results[idx];
-                        
+
                         fn display_result(result: &SearchRow, ui: &mut egui::Ui) {
                             ui.horizontal(|ui| {
                                 if let Some(icon) = result.icon() {
@@ -224,7 +224,7 @@ impl Launcher {
                                 ui.label(result.name());
                             });
                         }
-                        
+
                         if self.selected_entry_idx == idx {
                             egui::Frame::new()
                                 .fill(Color32::from_black_alpha(40))

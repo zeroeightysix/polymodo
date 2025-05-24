@@ -22,6 +22,7 @@ pub fn create_app_driver<A: App>(
     surf_driver_event_sender: mpsc::Sender<SurfaceEvent>,
 ) -> impl AppDriver
 where
+    A: 'static,
     A::Message: 'static,
 {
     AppDriverImpl {
@@ -32,7 +33,10 @@ where
     }
 }
 
-fn new_context(for_key: AppKey, surf_driver_event_sender: mpsc::Sender<SurfaceEvent>) -> egui::Context {
+fn new_context(
+    for_key: AppKey,
+    surf_driver_event_sender: mpsc::Sender<SurfaceEvent>,
+) -> egui::Context {
     let context = egui::Context::default();
     // the previous repaint task, if any.
     // note that this uses LiveHandle, meaning that if the `Context` is dropped, it drops the callback,
@@ -76,8 +80,10 @@ fn new_context(for_key: AppKey, surf_driver_event_sender: mpsc::Sender<SurfaceEv
     const ZOOM_FACTOR: f32 = 2.0;
 
     context.set_theme(egui::Theme::Dark);
-    context.style_mut(|style| for (_, font_id) in style.text_styles.iter_mut() {
-        font_id.size *= ZOOM_FACTOR;
+    context.style_mut(|style| {
+        for (_, font_id) in style.text_styles.iter_mut() {
+            font_id.size *= ZOOM_FACTOR;
+        }
     });
 
     context
@@ -367,7 +373,7 @@ impl AppSurfaceDriver {
             .filter(|(_, key)| *key == app_key)
             .map(|(fid, _)| &fid.surface_id)
             .collect::<Vec<_>>();
-        
+
         for surface in &mut self.surfaces {
             if ids.contains(&&surface.surface_id()) {
                 driver.request_repaint(surface.viewport_id());
@@ -424,7 +430,11 @@ impl AppSurfaceDriver {
             .find(|surf| &surf.surface_id() == surface_id)
     }
 
-    fn surface_id_by_viewport_id(&self, app_key: AppKey, viewport_id: ViewportId) -> Option<SurfaceId> {
+    fn surface_id_by_viewport_id(
+        &self,
+        app_key: AppKey,
+        viewport_id: ViewportId,
+    ) -> Option<SurfaceId> {
         self.app_surface_map
             .iter()
             .find(|(fid, key)| app_key == *key && fid.viewport_id == viewport_id)
@@ -438,6 +448,8 @@ impl AppSurfaceDriver {
 /// has GATs that make it dyn incompatible.
 pub trait AppDriver {
     fn key(&self) -> AppKey;
+
+    fn app_type(&self) -> std::any::TypeId;
 
     fn request_repaint(&self, viewport_id: ViewportId);
 
@@ -457,10 +469,15 @@ struct AppDriverImpl<A: App> {
 
 impl<A: App> AppDriver for AppDriverImpl<A>
 where
+    A: 'static,
     A::Message: 'static,
 {
     fn key(&self) -> AppKey {
         self.key
+    }
+
+    fn app_type(&self) -> std::any::TypeId {
+        std::any::TypeId::of::<A>()
     }
 
     fn request_repaint(&self, viewport_id: ViewportId) {
