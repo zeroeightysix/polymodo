@@ -70,10 +70,9 @@ pub fn load(path: impl AsRef<Path>) -> anyhow::Result<DesktopEntry> {
 }
 
 pub fn find_desktop_entries() -> impl Iterator<Item = DesktopEntry> {
-    let dirs = xdg::BaseDirectories::new().expect("cannot get base directories");
+    let dirs = xdg::BaseDirectories::new().data_dirs;
 
-    dirs.get_data_dirs()
-        .into_iter()
+    dirs.into_iter()
         .map(|dir| dir.join("applications"))
         .map(|dir| dir.read_dir())
         .filter_map(Result::ok)
