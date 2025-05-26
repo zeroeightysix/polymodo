@@ -233,7 +233,7 @@ impl Launcher {
 
                         if self.selected_entry_idx == idx {
                             egui::Frame::new()
-                                .fill(Color32::from_black_alpha(40))
+                                .fill(Color32::from_black_alpha(100))
                                 .outer_margin(egui::Margin::same(-2))
                                 .inner_margin(egui::Margin::same(2))
                                 .corner_radius(8.0)
