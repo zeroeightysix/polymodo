@@ -70,7 +70,12 @@ pub fn load(path: impl AsRef<Path>) -> anyhow::Result<DesktopEntry> {
 }
 
 pub fn find_desktop_entries() -> impl Iterator<Item = DesktopEntry> {
-    let dirs = xdg::BaseDirectories::new().data_dirs;
+    let mut dirs = xdg::BaseDirectories::new().data_dirs;
+
+    if let Some(home) = std::env::home_dir() {
+        let local_entries = home.join(".local/share");
+        dirs.push(local_entries);
+    }
 
     dirs.into_iter()
         .map(|dir| dir.join("applications"))
