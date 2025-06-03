@@ -30,7 +30,7 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
     }
 
     // then start a search for new ones
-    let entries = find_desktop_entries().collect::<Vec<_>>();
+    let entries = find_desktop_entries();
     // and add any new ones to the searcher
     {
         let mut rows = DESKTOP_ENTRIES.lock().unwrap();

@@ -69,18 +69,49 @@ pub fn load(path: impl AsRef<Path>) -> anyhow::Result<DesktopEntry> {
     })
 }
 
-pub fn find_desktop_entries() -> impl Iterator<Item = DesktopEntry> {
+struct DesktopEntryIdentifier<'a> {
+    base_dir: &'a Path,
+    entry: walkdir::DirEntry,
+}
+
+impl DesktopEntryIdentifier<'_> {
+    fn relative_dir(&self) -> Option<&Path> {
+        self.entry.path().strip_prefix(self.base_dir).ok()
+    }
+}
+
+fn find_desktop_entries_in_base_dir(base_dir: &Path) -> impl Iterator<Item=DesktopEntryIdentifier> {
+    walkdir::WalkDir::new(base_dir)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().map(|ext| ext == "desktop").unwrap_or(false))
+        .map(|e| DesktopEntryIdentifier {
+            base_dir,
+            entry: e
+        })
+}
+
+pub fn find_desktop_entries() -> Vec<DesktopEntry> {
     let base_dirs = xdg::BaseDirectories::new();
 
-    base_dirs.data_home
-        .into_iter()
-        .chain(base_dirs.data_dirs.into_iter())
-        .map(|dir| dir.join("applications"))
-        .map(|dir| dir.read_dir())
-        .filter_map(Result::ok)
-        .flat_map(|d| {
-            d.filter_map(Result::ok)
-                .map(|entry| load(entry.path()))
-                .filter_map(Result::ok)
-        })
+    let mut data_dirs = base_dirs.data_dirs;
+    if let Some(data_home) = base_dirs.data_home {
+        data_dirs.insert(0, data_home);
+    }
+    
+    for dir in &mut data_dirs {
+        dir.push("applications");
+    }
+
+    let mut desktop_entries = data_dirs.iter()
+        .flat_map(|dd| find_desktop_entries_in_base_dir(dd))
+        .collect::<Vec<_>>();
+    
+    // remove duplicate entries
+    desktop_entries.dedup_by_key(|e| e.relative_dir().map(|d| d.to_owned()));
+    
+    desktop_entries.into_iter()
+        .filter_map(|e| load(e.entry.path()).ok())
+        .collect::<Vec<_>>()
 }
