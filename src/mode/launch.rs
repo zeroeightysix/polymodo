@@ -4,7 +4,6 @@ use crate::windowing::surface::LayerSurfaceOptions;
 use crate::xdg::find_desktop_entries;
 use anyhow::anyhow;
 use egui::{Color32, CornerRadius, Response, Widget};
-use egui_virtual_list::VirtualList;
 use nucleo::Utf32String;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
@@ -102,7 +101,6 @@ pub struct Launcher {
     search: FuzzySearch<1, SearchRow>,
     results: Vec<SearchRow>,
     selected_entry_idx: usize,
-    list: VirtualList,
     finish: Option<tokio::sync::oneshot::Sender<<Self as App>::Output>>,
 }
 
@@ -206,54 +204,40 @@ impl Launcher {
 
     fn show_results(&mut self, ui: &mut egui::Ui) {
         let results = &self.results;
-        let list = &mut self.list;
 
         egui::ScrollArea::vertical()
             .min_scrolled_height(500.0) // TODO: ui.available_height() is 0; why?
-            .show(ui, |ui| {
+            .show_rows(ui, 32.0, results.len(), |ui, range| {
                 ui.set_width(ui.available_width());
+                
+                for idx in range {
+                    let result = &results[idx];
+                    fn display_result(result: &SearchRow, ui: &mut egui::Ui) {
+                        ui.horizontal(|ui| {
+                            if let Some(icon) = result.icon() {
+                                egui::Image::new(icon)
+                                    .fit_to_exact_size(egui::Vec2::splat(32.0))
+                                    .ui(ui);
+                            }
 
-                list.ui_custom_layout(ui, results.len(), |ui, start_idx| {
-                    let mut items_shown = 0;
-                    #[allow(clippy::needless_range_loop)]
-                    for idx in start_idx..results.len() {
-                        let result = &results[idx];
-
-                        fn display_result(result: &SearchRow, ui: &mut egui::Ui) {
-                            ui.horizontal(|ui| {
-                                if let Some(icon) = result.icon() {
-                                    egui::Image::new(icon)
-                                        .fit_to_exact_size(egui::Vec2::splat(32.0))
-                                        .ui(ui);
-                                }
-
-                                ui.label(result.name());
-                            });
-                        }
-
-                        if self.selected_entry_idx == idx {
-                            egui::Frame::new()
-                                .fill(Color32::from_black_alpha(100))
-                                .outer_margin(egui::Margin::same(-2))
-                                .inner_margin(egui::Margin::same(2))
-                                .corner_radius(8.0)
-                                .show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    display_result(result, ui);
-                                });
-                        } else {
-                            display_result(result, ui);
-                        }
-
-                        items_shown += 1;
-
-                        if ui.available_height() <= 0.0 {
-                            break;
-                        }
+                            ui.label(result.name());
+                        });
                     }
 
-                    items_shown
-                });
+                    if self.selected_entry_idx == idx {
+                        egui::Frame::new()
+                            .fill(Color32::from_black_alpha(100))
+                            .outer_margin(egui::Margin::same(-2))
+                            .inner_margin(egui::Margin::same(2))
+                            .corner_radius(8.0)
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                display_result(result, ui);
+                            });
+                    } else {
+                        display_result(result, ui);
+                    }
+                }
             });
     }
 
@@ -292,7 +276,6 @@ impl App for Launcher {
             search,
             results: entries,
             selected_entry_idx: 0,
-            list: Default::default(),
             finish: Some(finish),
         };
 
@@ -333,10 +316,8 @@ impl App for Launcher {
         frame.inner_margin = egui::Margin::same(8);
         frame.corner_radius = CornerRadius::same(16);
 
-        egui::TopBottomPanel::top("top_panel")
-            .max_height(600.0)
+        egui::CentralPanel::default()
             .frame(frame.outer_margin((frame.shadow.blur + frame.shadow.spread + 1) as f32))
-            .show_separator_line(false)
             .show(ctx, |ui| {
                 self.app_launcher_ui(ui);
             });

@@ -676,16 +676,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "egui_virtual_list"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "892bc51cb691c5cf1d1a72b0f84f20674ce7fb482d76ed3266fae926f9390bef"
-dependencies = [
- "egui",
- "web-time",
-]
-
-[[package]]
 name = "either"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1768,7 +1758,6 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui_extras",
- "egui_virtual_list",
  "fork",
  "home",
  "image",
