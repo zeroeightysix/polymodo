@@ -3,7 +3,7 @@ use crate::windowing::app::{App, AppSender, AppSetup};
 use crate::windowing::surface::LayerSurfaceOptions;
 use crate::xdg::find_desktop_entries;
 use anyhow::anyhow;
-use egui::{Color32, CornerRadius, Response, Widget};
+use egui::{Color32, CornerRadius, FontId, Response, RichText, Widget};
 use nucleo::Utf32String;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
@@ -205,32 +205,33 @@ impl Launcher {
     fn show_results(&mut self, ui: &mut egui::Ui) {
         let results = &self.results;
 
+        const ICON_SIZE: f32 = 32.0;
         egui::ScrollArea::vertical()
             .min_scrolled_height(500.0) // TODO: ui.available_height() is 0; why?
-            .show_rows(ui, 34.0, results.len(), |ui, range| {
+            .show_rows(ui, ICON_SIZE, results.len(), |ui, range| {
                 ui.set_width(ui.available_width());
                 
                 for idx in range {
                     let result = &results[idx];
                     fn display_result(result: &SearchRow, ui: &mut egui::Ui) {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_centered(|ui| {
                             ui.set_height(ui.available_height());
-                            
+
                             if let Some(icon) = result.icon() {
                                 egui::Image::new(icon)
-                                    .fit_to_exact_size(egui::Vec2::splat(32.0))
+                                    .fit_to_exact_size(egui::Vec2::splat(ICON_SIZE))
                                     .ui(ui);
                             } else {
-                                ui.add_space(32.0 + ui.spacing().item_spacing.x);
+                                ui.add_space(ICON_SIZE + ui.spacing().item_spacing.x);
                             }
-                            
-                            ui.label(result.name());
+
+                            ui.label(RichText::new(result.name()).font(FontId::proportional(ICON_SIZE - 8.0)));
                         });
                     }
 
                     // fixed height for a row
                     ui.scope(|ui| {
-                        ui.set_height(34.);
+                        ui.set_height(ICON_SIZE);
 
                         if self.selected_entry_idx == idx {
                             egui::Frame::new()
