@@ -80,7 +80,7 @@ fn new_context(
     const ZOOM_FACTOR: f32 = 2.0;
 
     context.set_theme(egui::Theme::Dark);
-    context.style_mut(|style| {
+    context.all_styles_mut(|style| {
         for (_, font_id) in style.text_styles.iter_mut() {
             font_id.size *= ZOOM_FACTOR;
         }

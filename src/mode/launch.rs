@@ -207,36 +207,46 @@ impl Launcher {
 
         egui::ScrollArea::vertical()
             .min_scrolled_height(500.0) // TODO: ui.available_height() is 0; why?
-            .show_rows(ui, 32.0, results.len(), |ui, range| {
+            .show_rows(ui, 34.0, results.len(), |ui, range| {
                 ui.set_width(ui.available_width());
                 
                 for idx in range {
                     let result = &results[idx];
                     fn display_result(result: &SearchRow, ui: &mut egui::Ui) {
                         ui.horizontal(|ui| {
+                            ui.set_height(ui.available_height());
+                            
                             if let Some(icon) = result.icon() {
                                 egui::Image::new(icon)
                                     .fit_to_exact_size(egui::Vec2::splat(32.0))
                                     .ui(ui);
+                            } else {
+                                ui.add_space(32.0 + ui.spacing().item_spacing.x);
                             }
-
+                            
                             ui.label(result.name());
                         });
                     }
 
-                    if self.selected_entry_idx == idx {
-                        egui::Frame::new()
-                            .fill(Color32::from_black_alpha(100))
-                            .outer_margin(egui::Margin::same(-2))
-                            .inner_margin(egui::Margin::same(2))
-                            .corner_radius(8.0)
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                display_result(result, ui);
-                            });
-                    } else {
-                        display_result(result, ui);
-                    }
+                    // fixed height for a row
+                    ui.scope(|ui| {
+                        ui.set_height(34.);
+
+                        if self.selected_entry_idx == idx {
+                            egui::Frame::new()
+                                .fill(Color32::from_gray(64))
+                                .outer_margin(egui::Margin::same(-2))
+                                .inner_margin(egui::Margin::same(2))
+                                .corner_radius(4.0)
+                                .show(ui, |ui| {
+                                    ui.set_height(ui.available_height());
+                                    ui.set_width(ui.available_width());
+                                    display_result(result, ui);
+                                });
+                        } else {
+                            display_result(result, ui);
+                        }
+                    });
                 }
             });
     }
