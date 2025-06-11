@@ -10,6 +10,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
+use smithay_client_toolkit::shell::wlr_layer::Layer;
 
 static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
 
@@ -119,6 +120,7 @@ impl Launcher {
             namespace: Some("polymodo"),
             width: 500,
             height: 600,
+            layer: Layer::Overlay,
             ..Default::default()
         }
     }
@@ -210,7 +212,7 @@ impl Launcher {
             .min_scrolled_height(500.0) // TODO: ui.available_height() is 0; why?
             .show_rows(ui, ICON_SIZE, results.len(), |ui, range| {
                 ui.set_width(ui.available_width());
-                
+
                 for idx in range {
                     let result = &results[idx];
                     fn display_result(result: &SearchRow, ui: &mut egui::Ui) {
