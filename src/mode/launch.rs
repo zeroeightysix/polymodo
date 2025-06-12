@@ -209,7 +209,7 @@ impl Launcher {
 
         const ICON_SIZE: f32 = 32.0;
         egui::ScrollArea::both()
-            .min_scrolled_height(500.0) // TODO: ui.available_height() is 0; why?
+            .min_scrolled_height(ui.available_height())
             .min_scrolled_width(ui.available_width())
             .show_rows(ui, ICON_SIZE, results.len(), |ui, range| {
                 ui.set_width(ui.available_width());
