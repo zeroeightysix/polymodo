@@ -80,16 +80,20 @@ impl DesktopEntryIdentifier<'_> {
     }
 }
 
-fn find_desktop_entries_in_base_dir(base_dir: &Path) -> impl Iterator<Item=DesktopEntryIdentifier> {
+fn find_desktop_entries_in_base_dir(
+    base_dir: &Path,
+) -> impl Iterator<Item = DesktopEntryIdentifier> {
     walkdir::WalkDir::new(base_dir)
         .follow_links(true)
         .into_iter()
         .filter_map(Result::ok)
-        .filter(|e| e.path().extension().map(|ext| ext == "desktop").unwrap_or(false))
-        .map(|e| DesktopEntryIdentifier {
-            base_dir,
-            entry: e
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "desktop")
+                .unwrap_or(false)
         })
+        .map(|e| DesktopEntryIdentifier { base_dir, entry: e })
 }
 
 pub fn find_desktop_entries() -> Vec<DesktopEntry> {
@@ -99,19 +103,21 @@ pub fn find_desktop_entries() -> Vec<DesktopEntry> {
     if let Some(data_home) = base_dirs.data_home {
         data_dirs.insert(0, data_home);
     }
-    
+
     for dir in &mut data_dirs {
         dir.push("applications");
     }
 
-    let mut desktop_entries = data_dirs.iter()
+    let mut desktop_entries = data_dirs
+        .iter()
         .flat_map(|dd| find_desktop_entries_in_base_dir(dd))
         .collect::<Vec<_>>();
-    
+
     // remove duplicate entries
     desktop_entries.dedup_by_key(|e| e.relative_dir().map(|d| d.to_owned()));
-    
-    desktop_entries.into_iter()
+
+    desktop_entries
+        .into_iter()
         .filter_map(|e| load(e.entry.path()).ok())
         .collect::<Vec<_>>()
 }
