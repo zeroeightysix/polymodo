@@ -2,6 +2,7 @@ use crate::app_surface_driver::{AppEvent, AppKey};
 use local_channel::mpsc::SendError;
 use std::future::Future;
 use std::marker::PhantomData;
+use egui::ViewportId;
 use tokio::task::JoinSet;
 
 pub trait App: Sized {
@@ -15,7 +16,19 @@ pub trait App: Sized {
         // do nothing by default.
     }
 
+    #[allow(unused_variables)]
+    fn on_surface_event(&mut self, surface_event: SurfaceEvent) {
+        // do nothing by default.
+    }
+
     fn render(&mut self, ctx: &egui::Context);
+}
+
+pub enum SurfaceEvent {
+    PointerEnter(ViewportId),
+    PointerLeave(ViewportId),
+    KeyboardEnter(ViewportId),
+    KeyboardLeave(ViewportId),
 }
 
 pub struct AppSetup<A, O> {
@@ -76,3 +89,4 @@ where
             .map_err(Box::new)
     }
 }
+
