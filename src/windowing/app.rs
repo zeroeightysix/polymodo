@@ -1,8 +1,8 @@
 use crate::app_surface_driver::{AppEvent, AppKey};
+use egui::ViewportId;
 use local_channel::mpsc::SendError;
 use std::future::Future;
 use std::marker::PhantomData;
-use egui::ViewportId;
 use tokio::task::JoinSet;
 
 pub trait App: Sized {
@@ -23,7 +23,7 @@ pub trait App: Sized {
 
     fn render(&mut self, ctx: &egui::Context);
 }
-
+#[expect(unused)]
 pub enum SurfaceEvent {
     PointerEnter(ViewportId),
     PointerLeave(ViewportId),
@@ -89,4 +89,3 @@ where
             .map_err(Box::new)
     }
 }
-
