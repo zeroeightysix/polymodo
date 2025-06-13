@@ -10,6 +10,7 @@ mod windowing;
 mod xdg;
 
 use crate::ipc::{AppDescription, ClientboundMessage, ServerboundMessage};
+use crate::mode::launch::Launcher;
 use clap::Parser;
 use std::io::ErrorKind;
 use std::sync::OnceLock;
@@ -19,7 +20,6 @@ use tracing::metadata::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
-use crate::mode::launch::Launcher;
 
 static RUNTIME: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 
@@ -58,12 +58,18 @@ async fn main() -> anyhow::Result<()> {
 
             // did we request a single app instance?
             if args.single {
-                client.send(ServerboundMessage::IsRunning(std::any::type_name::<Launcher>().to_string())).await
+                client
+                    .send(ServerboundMessage::IsRunning(
+                        std::any::type_name::<Launcher>().to_string(),
+                    ))
+                    .await
                     .expect("failed to send");
                 let message = client.recv().await.expect("failed to recv");
 
                 match message {
-                    ClientboundMessage::Running(name, false) if name == std::any::type_name::<Launcher>() => {
+                    ClientboundMessage::Running(name, false)
+                        if name == std::any::type_name::<Launcher>() =>
+                    {
                         // ok!
                     }
                     _ => {

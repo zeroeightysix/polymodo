@@ -277,7 +277,7 @@ impl AppSurfaceDriver {
                         app.on_surface_event(event);
                     }
                 })?;
-                
+
                 Ok(())
             }
             SurfaceEvent::UpdateRepeatInfo(info) => {

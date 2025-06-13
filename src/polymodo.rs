@@ -159,7 +159,10 @@ async fn serve_client(polymodo: Rc<Polymodo>, client: IpcS2C) {
 
                 let running = rx.await.expect("sender half closed");
 
-                if let Err(e) = client.send(ClientboundMessage::Running(type_id, running)).await {
+                if let Err(e) = client
+                    .send(ClientboundMessage::Running(type_id, running))
+                    .await
+                {
                     log::error!("failed to reply to client: {e}");
                 }
 
