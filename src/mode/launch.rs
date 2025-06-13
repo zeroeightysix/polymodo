@@ -1,16 +1,16 @@
 use crate::fuzzy_search::{FuzzySearch, Row};
-use crate::windowing::app::{App, AppSender, AppSetup};
+use crate::windowing::app::{App, AppSender, AppSetup, SurfaceEvent};
 use crate::windowing::surface::LayerSurfaceOptions;
 use crate::xdg::find_desktop_entries;
 use anyhow::anyhow;
 use egui::{Color32, CornerRadius, FontId, Response, RichText, Widget};
 use nucleo::Utf32String;
+use smithay_client_toolkit::shell::wlr_layer::Layer;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
-use smithay_client_toolkit::shell::wlr_layer::Layer;
 
 static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
 
@@ -228,7 +228,10 @@ impl Launcher {
                                 ui.add_space(ICON_SIZE + ui.spacing().item_spacing.x);
                             }
 
-                            ui.label(RichText::new(result.name()).font(FontId::proportional(ICON_SIZE - 8.0)));
+                            ui.label(
+                                RichText::new(result.name())
+                                    .font(FontId::proportional(ICON_SIZE - 8.0)),
+                            );
                         });
                     }
 
@@ -320,6 +323,13 @@ impl App for Launcher {
                 self.search.tick();
                 self.results = self.search.get_matches().into_iter().cloned().collect();
             }
+        }
+    }
+
+    fn on_surface_event(&mut self, surface_event: SurfaceEvent) {
+        match surface_event {
+            SurfaceEvent::KeyboardLeave(_) => self.finish(),
+            _ => {}
         }
     }
 

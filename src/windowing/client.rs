@@ -219,7 +219,7 @@ impl SurfaceSetup {
 
         // set up layer_shell options as provided
         layer_surface.set_anchor(anchor);
-        layer_surface.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+        layer_surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         layer_surface.set_size(width, height);
         layer_surface.commit();
 
