@@ -2,12 +2,13 @@ use crate::live_handle::LiveHandle;
 use crate::windowing::app::App;
 use crate::windowing::client::{SurfaceEvent, SurfaceSetup};
 use crate::windowing::surface::{LayerSurfaceOptions, ScaleFactor, Surface, SurfaceId};
-use crate::windowing::WindowingError;
+use crate::windowing::{app, WindowingError};
 use anyhow::Context;
 use egui::ViewportId;
 use rand::random;
 use smallvec::{smallvec, SmallVec};
 use smithay_client_toolkit::seat::keyboard::RepeatInfo;
+use smithay_client_toolkit::seat::pointer::PointerEventKind;
 use std::cell::Cell;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -168,8 +169,18 @@ impl AppSurfaceDriver {
                 self.paint(&id, None)
             }
             SurfaceEvent::KeyboardFocus(id, focus) => {
-                let surface = self.surface_by_id(&id).context("No such surface")?;
-                surface.on_focus(focus);
+                self.with_app_surf_mut(&id, |app, surface| {
+                    surface.on_focus(focus);
+
+                    let viewport_id = surface.viewport_id();
+                    let event = if focus {
+                        app::SurfaceEvent::KeyboardEnter(viewport_id)
+                    } else {
+                        app::SurfaceEvent::KeyboardLeave(viewport_id)
+                    };
+
+                    app.on_surface_event(event);
+                })?;
 
                 Ok(())
             }
@@ -248,8 +259,25 @@ impl AppSurfaceDriver {
                 Ok(())
             }
             SurfaceEvent::Pointer(id, pointer_event) => {
-                let surface = self.surface_by_id(&id).context("No such surface")?;
-                surface.handle_pointer_event(&pointer_event);
+                self.with_app_surf_mut(&id, |app, surface| {
+                    surface.handle_pointer_event(&pointer_event);
+
+                    let viewport_id = surface.viewport_id();
+                    let event = match pointer_event.kind {
+                        PointerEventKind::Enter { .. } => {
+                            Some(app::SurfaceEvent::PointerEnter(viewport_id))
+                        }
+                        PointerEventKind::Leave { .. } => {
+                            Some(app::SurfaceEvent::PointerLeave(viewport_id))
+                        }
+                        _ => None,
+                    };
+
+                    if let Some(event) = event {
+                        app.on_surface_event(event);
+                    }
+                })?;
+                
                 Ok(())
             }
             SurfaceEvent::UpdateRepeatInfo(info) => {
@@ -461,6 +489,7 @@ pub trait AppDriver {
     fn paint(&mut self, surface: &mut Surface, pass_nr: Option<u64>) -> Result<(), WindowingError>;
 
     fn on_message(&mut self, message: Box<dyn std::any::Any>);
+    fn on_surface_event(&mut self, surface_event: app::SurfaceEvent);
 
     fn set_scale(&mut self, scale: f32, surf: &mut Surface);
 }
@@ -516,6 +545,10 @@ where
         self.app.on_message(*message);
     }
 
+    fn on_surface_event(&mut self, surface_event: app::SurfaceEvent) {
+        self.app.on_surface_event(surface_event)
+    }
+
     fn set_scale(&mut self, scale: f32, surf: &mut Surface) {
         self.ctx.set_zoom_factor(scale);
         surf.set_scale(scale);
@@ -568,7 +601,10 @@ pub fn create_surface_driver_task(
                         log::error!("could not deliver message to app {app_key}; this is a bug.");
                     }
                 }
-                AppEvent::AppExistsQuery { app_type_id, response } => {
+                AppEvent::AppExistsQuery {
+                    app_type_id,
+                    response,
+                } => {
                     let running = driver.is_running(&app_type_id);
                     let _ = response.send(running);
                 }
@@ -614,7 +650,7 @@ pub enum AppEvent {
     AppExistsQuery {
         app_type_id: String,
         response: tokio::sync::oneshot::Sender<bool>,
-    }
+    },
 }
 
 #[derive(Debug, Clone)]
