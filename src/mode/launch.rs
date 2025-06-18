@@ -357,11 +357,8 @@ fn launch(entry: &LauncherEntry) -> anyhow::Result<()> {
     match fork::fork().map_err(|_| anyhow!("failed to fork process"))? {
         fork::Fork::Child => {
             // detach
-            if let Err(e) = fork::setsid() {
-                log::error!("setsid failed: {}", e);
-            }
-            if let Err(e) = chdir() {
-                log::error!("chdir failed: {}", e);
+            if let Err(e) = nix::unistd::daemon(false, false) {
+                log::error!("daemonize failed: {}", e);
             }
 
             // %f and %F: lists of files. polymodo does not yet support selecting files.
@@ -400,15 +397,11 @@ fn launch(entry: &LauncherEntry) -> anyhow::Result<()> {
         }
         fork::Fork::Parent(pid) => {
             log::info!("Launching {:?} with pid {pid}", entry.name.as_str());
+
             let _ = std::io::stdout().flush();
             Ok(())
         }
     }
-}
-
-fn chdir() -> std::io::Result<()> {
-    let home = home::home_dir().unwrap_or(PathBuf::from("/"));
-    std::env::set_current_dir(&home)
 }
 
 #[derive(Debug, Clone)]
