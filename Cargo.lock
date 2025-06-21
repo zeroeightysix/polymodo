@@ -1000,9 +1000,9 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
 name = "icon"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1efd4018c37128d13fae5ea89a9baccca5f0945175490c1f37f54a7f1f23edc5"
+checksum = "045e235cbcf046425057a7e1254f644a60134d5c69cc89cdb31c98fd13d93124"
 dependencies = [
  "freedesktop_entry_parser",
  "thiserror 2.0.12",
