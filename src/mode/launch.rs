@@ -10,9 +10,11 @@ use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use icon::Icons;
 
 static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
+static ICONS: LazyLock<Icons> = LazyLock::new(Icons::new);
 
 fn copy_desktop_entry_cache() -> Vec<SearchRow> {
     let rows = DESKTOP_ENTRIES.lock().unwrap();
@@ -68,21 +70,14 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
                         let _ = launcher_entry.icon_resolved.set(icon);
                     } else {
                         let icon = icon.to_string();
-                        drop(tokio::task::spawn_blocking(move || {
-                            // find the icon according to the spec:
-                            let icon_path = linicon::lookup_icon(icon)
-                                .with_scale(1) // TODO: use the surface scale
-                                .with_size(32) // TODO: not sensible
-                                .filter_map(Result::ok)
-                                .next();
+                        let icon = ICONS.find_icon(icon.as_str(), 32, 1, "Adwaita"); // TODO: find user icon theme
 
-                            if let Some(icon_path) = icon_path {
-                                let path = icon_path.path.to_string_lossy().to_string();
-                                let path = format!("file://{path}");
+                        if let Some(icon) = icon {
+                            let path = icon.path.to_string_lossy().to_string();
+                            let path = format!("file://{path}");
 
-                                let _ = launcher_entry.icon_resolved.set(path);
-                            }
-                        }));
+                            let _ = launcher_entry.icon_resolved.set(path);
+                        }
                     }
                 }
 
