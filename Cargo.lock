@@ -1444,7 +1444,7 @@ dependencies = [
 [[package]]
 name = "nucleo"
 version = "0.5.0"
-source = "git+https://github.com/ToxicMushroom/nucleo.git?rev=dc65916#dc659163a596a81c3974affa87169c41307c2195"
+source = "git+https://github.com/ToxicMushroom/nucleo.git?rev=9b1a0eb#9b1a0eb703217306fc5933d607b0547263d950ab"
 dependencies = [
  "nucleo-matcher",
  "parking_lot",
@@ -1454,7 +1454,7 @@ dependencies = [
 [[package]]
 name = "nucleo-matcher"
 version = "0.3.1"
-source = "git+https://github.com/ToxicMushroom/nucleo.git?rev=dc65916#dc659163a596a81c3974affa87169c41307c2195"
+source = "git+https://github.com/ToxicMushroom/nucleo.git?rev=9b1a0eb#9b1a0eb703217306fc5933d607b0547263d950ab"
 dependencies = [
  "memchr",
  "unicode-segmentation",
