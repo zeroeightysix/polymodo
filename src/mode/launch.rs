@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::fuzzy_search::{FuzzySearch, Row};
 use crate::windowing::app::{App, AppSender, AppSetup, SurfaceEvent};
 use crate::windowing::surface::LayerSurfaceOptions;
@@ -16,18 +17,26 @@ use icon::Icons;
 static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
 static ICONS: LazyLock<Icons> = LazyLock::new(Icons::new);
 
+type LaunchHistory = HashMap<PathBuf, u32>;
+
+#[derive(Debug, Default, bincode::Decode, bincode::Encode)]
+struct LauncherEntryBiasState {
+    history: LaunchHistory,
+}
+
 fn copy_desktop_entry_cache() -> Vec<SearchRow> {
     let rows = DESKTOP_ENTRIES.lock().unwrap();
 
     rows.clone()
 }
 
-fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
+fn scour_desktop_entries(pusher: impl Fn(LauncherItemContext), history: &LaunchHistory) {
     // immediately push cached entries
     {
         let rows = DESKTOP_ENTRIES.lock().unwrap();
         for row in &*rows {
-            pusher(row.clone())
+            let bonus_score = history.get(&row.0.path).cloned().unwrap_or(0);
+            pusher(LauncherItemContext { item: row.clone(), bonus_score })
         }
     }
 
@@ -85,19 +94,35 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow)) {
 
                 // and also add it to the fuzzy searcher
                 let entry = rows.last().unwrap().clone();
-                pusher(entry);
+                let bonus_score = history.get(&entry.0.path).cloned().unwrap_or(0);
+                pusher(LauncherItemContext { item: entry, bonus_score })
             }
         }
     }
 }
 
+#[derive(Clone)]
+struct LauncherItemContext {
+    item: SearchRow,
+    bonus_score: u32,
+}
+impl Row<1> for LauncherItemContext {
+    type Output = Utf32String;
+
+    fn columns(&self) -> [Self::Output; 1] {
+        self.item.columns()
+    }
+}
+
+
 pub struct Launcher {
     search_input: String,
     focus_search: bool,
-    search: FuzzySearch<1, SearchRow>,
+    search: FuzzySearch<1, LauncherItemContext>,
     results: Vec<SearchRow>,
     selected_entry_idx: usize,
     finish: Option<tokio::sync::oneshot::Sender<<Self as App>::Output>>,
+    bias: LauncherEntryBiasState,
 }
 
 #[derive(Debug, Clone)]
@@ -170,6 +195,19 @@ impl Launcher {
         {
             let entry = self.results.get(self.selected_entry_idx);
             if let Some(entry) = entry.map(|e| e.0.as_ref()) {
+                // boost the bias for this entry and 'demote' others
+                let bias = &mut self.bias;
+                bias.history.values_mut()
+                    .for_each(|avg| *avg = decrement_history_value(*avg));
+
+                let this_entry = bias.history.entry(entry.path.clone())
+                    .or_default();
+                *this_entry = bump_history_value(*this_entry);
+
+                if let Err(e) = crate::persistence::write_state("launcher", "entry_bias", &*bias) {
+                    log::error!("failed to save history state: {e}");
+                }
+
                 if let Err(e) = launch(entry) {
                     log::error!("failed to launch with error {e}");
                 }
@@ -270,16 +308,30 @@ impl App for Launcher {
     type Output = anyhow::Result<()>;
 
     fn create(message_sender: AppSender<Self::Message>) -> AppSetup<Self, Self::Output> {
+        // read the bias from persistent state, if any.
+        let bias: LauncherEntryBiasState = crate::persistence::read_state("launcher", "entry_bias")
+            .ok()
+            .unwrap_or_default();
+
+        println!("{:#?}", bias);
+
         let mut config = nucleo::Config::DEFAULT;
         config.prefer_prefix = true;
-        let search = FuzzySearch::create_with_config(config);
+        let score_tail = Arc::new(|a, c: &LauncherItemContext|
+            a + c.bonus_score
+        );
+        let search = FuzzySearch::create_with_config(score_tail, config);
         let pusher = search.pusher();
 
         let (finish, finish_recv) = tokio::sync::oneshot::channel();
 
         let entries = copy_desktop_entry_cache();
 
-        tokio::task::spawn_blocking(move || scour_desktop_entries(pusher));
+        {
+            // TODO: avoid clone, bias should go through FuzzySearch instead
+            let bias = bias.history.clone();
+            tokio::task::spawn_blocking(move || scour_desktop_entries(pusher, &bias));
+        }
 
         let launcher = Launcher {
             search_input: String::new(),
@@ -289,6 +341,7 @@ impl App for Launcher {
             results: entries,
             selected_entry_idx: 0,
             finish: Some(finish),
+            bias,
         };
 
         let notify = launcher.search.notify();
@@ -316,7 +369,7 @@ impl App for Launcher {
         match message {
             Message::Search => {
                 self.search.tick();
-                self.results = self.search.get_matches().into_iter().cloned().collect();
+                self.results = self.search.get_matches().into_iter().cloned().map(|x| x.item).collect();
             }
         }
     }
@@ -399,6 +452,22 @@ fn launch(entry: &LauncherEntry) -> anyhow::Result<()> {
     }
 }
 
+fn bump_history_value(value: u32) -> u32 {
+    const ALPHA: f32 = 0.5f32;
+    const INV_ALPHA: f32 = 1f32 - ALPHA;
+    let increment = 100;
+
+    (ALPHA * increment as f32 + INV_ALPHA * value as f32) as u32
+}
+
+fn decrement_history_value(value: u32) -> u32 {
+    const ALPHA: f32 = 0.1f32;
+    const INV_ALPHA: f32 = 1f32 - ALPHA;
+    let increment = 0;
+
+    (ALPHA * increment as f32 + INV_ALPHA * value as f32) as u32
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Search,
@@ -427,5 +496,13 @@ impl SearchRow {
 
     fn path(&self) -> &Path {
         &self.0.path
+    }
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn test() {
+        
     }
 }
