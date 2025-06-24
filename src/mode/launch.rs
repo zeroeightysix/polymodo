@@ -302,8 +302,6 @@ impl App for Launcher {
             .ok()
             .unwrap_or_default();
 
-        println!("{:#?}", bias);
-
         let mut config = nucleo::Config::DEFAULT;
         config.prefer_prefix = true;
         let search = FuzzySearch::create_with_config(config);
