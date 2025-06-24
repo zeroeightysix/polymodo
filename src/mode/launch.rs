@@ -14,6 +14,7 @@ use std::process::Command;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Instant;
 use icon::Icons;
+use tokio::sync::mpsc;
 
 static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
 static ICONS: LazyLock<Icons> = LazyLock::new(Icons::new);
@@ -29,6 +30,10 @@ fn copy_desktop_entry_cache() -> Vec<SearchRow> {
     let rows = DESKTOP_ENTRIES.lock().unwrap();
 
     rows.clone()
+}
+
+struct IconWorker {
+    sender: mpsc::UnboundedSender<Arc<LauncherEntry>>,
 }
 
 fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
@@ -47,7 +52,9 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
     {
         let mut rows = DESKTOP_ENTRIES.lock().unwrap();
         let mut new_entries = 0u32;
-        
+
+        let mut icon_worker: Option<IconWorker> = None;
+
         for entry in entries {
             let Some(exec) = entry.exec else {
                 continue;
@@ -73,26 +80,22 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
                 });
 
                 // try locating the icon for this desktop entry, if any, and which may have to be deferred:
-                if let Some(icon) = launcher_entry.icon.as_deref() {
-                    let launcher_entry = launcher_entry.clone();
+                let worker = icon_worker.get_or_insert_with(|| {
+                    let (sender, mut receiver) = mpsc::unbounded_channel();
+                    let _handle = tokio::task::spawn_blocking(move || -> Option<()> {
+                        loop {
+                            let entry = receiver.blocking_recv()?;
 
-                    // if `Icon` is an absolute path, the image pointed at should be loaded:
-                    if icon.starts_with('/') && std::fs::exists(icon).unwrap_or(false) {
-                        let icon = format!("file://{icon}");
-
-                        let _ = launcher_entry.icon_resolved.set(icon);
-                    } else {
-                        let icon = icon.to_string();
-                        let icon = ICONS.find_icon(icon.as_str(), 32, 1, "Adwaita"); // TODO: find user icon theme
-
-                        if let Some(icon) = icon {
-                            let path = icon.path.to_string_lossy().to_string();
-                            let path = format!("file://{path}");
-
-                            let _ = launcher_entry.icon_resolved.set(path);
+                            find_and_set_icon(&entry);
                         }
+                    });
+
+                    IconWorker {
+                        sender,
                     }
-                }
+                });
+
+                let _ = worker.sender.send(launcher_entry.clone());
 
                 let bonus_score = history.get(&launcher_entry.path).cloned().unwrap_or(0);
 
@@ -106,11 +109,36 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
                 pusher(entry)
             }
         }
-        
+
         if new_entries != 0 {
             let time_it_took = Instant::now() - start;
 
             log::debug!("Took {time_it_took:?} to find {new_entries} new entries");
+        }
+    }
+}
+
+fn find_and_set_icon(launcher_entry: &Arc<LauncherEntry>) {
+    let launcher_entry = launcher_entry.clone();
+
+    let Some(icon) = launcher_entry.icon.as_ref() else {
+        return;
+    };
+
+    // if `Icon` is an absolute path, the image pointed at should be loaded:
+    if icon.starts_with('/') && std::fs::exists(icon).unwrap_or(false) {
+        let icon = format!("file://{icon}");
+
+        let _ = launcher_entry.icon_resolved.set(icon);
+    } else {
+        let icon = icon.to_string();
+        let icon = ICONS.find_icon(icon.as_str(), 32, 1, "Adwaita"); // TODO: find user icon theme
+
+        if let Some(icon) = icon {
+            let path = icon.path.to_string_lossy().to_string();
+            let path = format!("file://{path}");
+
+            let _ = launcher_entry.icon_resolved.set(path);
         }
     }
 }
