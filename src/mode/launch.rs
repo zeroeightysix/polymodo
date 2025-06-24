@@ -12,6 +12,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::time::Instant;
 use icon::Icons;
 
 static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
@@ -40,10 +41,13 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
     }
 
     // then start a search for new ones
+    let start = Instant::now();
     let entries = find_desktop_entries();
     // and add any new ones to the searcher
     {
         let mut rows = DESKTOP_ENTRIES.lock().unwrap();
+        let mut new_entries = 0u32;
+        
         for entry in entries {
             let Some(exec) = entry.exec else {
                 continue;
@@ -57,6 +61,7 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
             // if, for this desktop entry, there exists no SearchRow yet (with comparison being done on the source path)
             if !rows.iter().any(|row| entry.source_path == row.path()) {
                 log::debug!("new entry {}", entry.source_path.to_string_lossy(),);
+                new_entries += 1;
 
                 // add a new search entry for this desktop entry.
                 let launcher_entry = Arc::new(LauncherEntry {
@@ -100,6 +105,12 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
                 let entry = rows.last().unwrap().clone();
                 pusher(entry)
             }
+        }
+        
+        if new_entries != 0 {
+            let time_it_took = Instant::now() - start;
+
+            log::debug!("Took {time_it_took:?} to find {new_entries} new entries");
         }
     }
 }
