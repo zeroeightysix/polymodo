@@ -42,6 +42,7 @@ pub fn write_state<S: bincode::Encode>(
     let file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
+        .truncate(true)
         .open(file)?;
     let mut buf_write = std::io::BufWriter::new(file);
 

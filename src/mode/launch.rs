@@ -30,13 +30,12 @@ fn copy_desktop_entry_cache() -> Vec<SearchRow> {
     rows.clone()
 }
 
-fn scour_desktop_entries(pusher: impl Fn(LauncherItemContext), history: &LaunchHistory) {
+fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
     // immediately push cached entries
     {
         let rows = DESKTOP_ENTRIES.lock().unwrap();
         for row in &*rows {
-            let bonus_score = history.get(&row.0.path).cloned().unwrap_or(0);
-            pusher(LauncherItemContext { item: row.clone(), bonus_score })
+            pusher(row.clone())
         }
     }
 
@@ -90,35 +89,25 @@ fn scour_desktop_entries(pusher: impl Fn(LauncherItemContext), history: &LaunchH
                     }
                 }
 
-                rows.push(SearchRow(launcher_entry));
+                let bonus_score = history.get(&launcher_entry.path).cloned().unwrap_or(0);
+
+                rows.push(SearchRow {
+                    entry: launcher_entry,
+                    bonus_score
+                });
 
                 // and also add it to the fuzzy searcher
                 let entry = rows.last().unwrap().clone();
-                let bonus_score = history.get(&entry.0.path).cloned().unwrap_or(0);
-                pusher(LauncherItemContext { item: entry, bonus_score })
+                pusher(entry)
             }
         }
     }
 }
 
-#[derive(Clone)]
-struct LauncherItemContext {
-    item: SearchRow,
-    bonus_score: u32,
-}
-impl Row<1> for LauncherItemContext {
-    type Output = Utf32String;
-
-    fn columns(&self) -> [Self::Output; 1] {
-        self.item.columns()
-    }
-}
-
-
 pub struct Launcher {
     search_input: String,
     focus_search: bool,
-    search: FuzzySearch<1, LauncherItemContext>,
+    search: FuzzySearch<1, SearchRow>,
     results: Vec<SearchRow>,
     selected_entry_idx: usize,
     finish: Option<tokio::sync::oneshot::Sender<<Self as App>::Output>>,
@@ -194,7 +183,7 @@ impl Launcher {
             && !self.results.is_empty()
         {
             let entry = self.results.get(self.selected_entry_idx);
-            if let Some(entry) = entry.map(|e| e.0.as_ref()) {
+            if let Some(entry) = entry.map(|e| e.entry.as_ref()) {
                 // boost the bias for this entry and 'demote' others
                 let bias = &mut self.bias;
                 bias.history.values_mut()
@@ -317,10 +306,7 @@ impl App for Launcher {
 
         let mut config = nucleo::Config::DEFAULT;
         config.prefer_prefix = true;
-        let score_tail = Arc::new(|a, c: &LauncherItemContext|
-            a + c.bonus_score
-        );
-        let search = FuzzySearch::create_with_config(score_tail, config);
+        let search = FuzzySearch::create_with_config(config);
         let pusher = search.pusher();
 
         let (finish, finish_recv) = tokio::sync::oneshot::channel();
@@ -369,12 +355,13 @@ impl App for Launcher {
         match message {
             Message::Search => {
                 self.search.tick();
-                self.results = self.search.get_matches().into_iter().cloned().map(|x| x.item).collect();
+                self.results = self.search.get_matches().into_iter().cloned().collect();
             }
         }
     }
 
     fn on_surface_event(&mut self, surface_event: SurfaceEvent) {
+        #[allow(clippy::single_match)]
         match surface_event {
             SurfaceEvent::KeyboardLeave(_) => self.finish(),
             _ => {}
@@ -475,7 +462,10 @@ pub enum Message {
 
 /// Arc around a [LauncherEntry], meant to be shareable between the fuzzy matcher and UI.
 #[derive(Clone, Debug)]
-struct SearchRow(pub Arc<LauncherEntry>);
+struct SearchRow {
+    pub entry: Arc<LauncherEntry>,
+    pub bonus_score: u32,
+}
 
 impl Row<1> for SearchRow {
     type Output = Utf32String;
@@ -483,19 +473,23 @@ impl Row<1> for SearchRow {
     fn columns(&self) -> [Self::Output; 1] {
         [self.name().into()]
     }
+
+    fn bonus(&self) -> u32 {
+        self.bonus_score
+    }
 }
 
 impl SearchRow {
     fn name(&self) -> &str {
-        self.0.name.as_str()
+        self.entry.name.as_str()
     }
 
     fn icon(&self) -> Option<&str> {
-        self.0.icon_resolved.get().map(|s| s.as_str())
+        self.entry.icon_resolved.get().map(|s| s.as_str())
     }
 
     fn path(&self) -> &Path {
-        &self.0.path
+        &self.entry.path
     }
 }
 
@@ -503,6 +497,6 @@ impl SearchRow {
 mod test {
     #[test]
     fn test() {
-        
+
     }
 }

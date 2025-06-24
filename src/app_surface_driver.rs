@@ -17,13 +17,13 @@ use tokio::task::{AbortHandle, JoinHandle};
 
 pub type AppKey = u32;
 
-pub fn create_app_driver<A: App>(
+pub fn create_app_driver<A>(
     key: AppKey,
     app: A,
     surf_driver_event_sender: mpsc::Sender<SurfaceEvent>,
 ) -> impl AppDriver
 where
-    A: 'static,
+    A: App + 'static,
     A::Message: 'static,
 {
     AppDriverImpl {

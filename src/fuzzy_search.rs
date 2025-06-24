@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 /// Abstraction over the nucleo fuzzy matching engine.
 ///
 /// 'a: how long references to the matched data live
@@ -19,32 +17,13 @@ pub trait Row<const C: usize> {
     type Output;
 
     fn columns(&self) -> [Self::Output; C];
+
+    fn bonus(&self) -> u32 {
+        0 // no bonus by default.
+    }
 }
 
 impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
-    /// Create a new [FuzzySearch] with the provided nucleo configuration
-    pub fn create_with_config(score_tail: Arc<(dyn Fn(u32, &D) -> u32 + Send + Sync)>, config: nucleo::Config) -> Self {
-        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
-        let nucleo = {
-            let notify = notify.clone();
-            nucleo::Nucleo::new(
-                config,
-                score_tail,
-                std::sync::Arc::new(move || notify.notify_one()),
-                None,
-                C as u32,
-            )
-        };
-        let injector = nucleo.injector();
-
-        Self {
-            nucleo,
-            injector,
-            notify,
-            query: String::new(),
-        }
-    }
-
     /// Start a new search.
     pub fn search<const COL: usize>(&mut self, query: impl Into<String>) {
         let query = query.into();
@@ -101,6 +80,33 @@ where
     D: Row<C>,
     D::Output: Into<nucleo::Utf32String>,
 {
+    fn score_tail(score: u32, entry: &D) -> u32 {
+        score + entry.bonus()
+    }
+
+    /// Create a new [FuzzySearch] with the provided nucleo configuration
+    pub fn create_with_config(config: nucleo::Config) -> Self {
+        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let nucleo = {
+            let notify = notify.clone();
+            nucleo::Nucleo::new(
+                config,
+                std::sync::Arc::new(Self::score_tail),
+                std::sync::Arc::new(move || notify.notify_one()),
+                None,
+                C as u32,
+            )
+        };
+        let injector = nucleo.injector();
+
+        Self {
+            nucleo,
+            injector,
+            notify,
+            query: String::new(),
+        }
+    }
+
     fn push_into(injector: &nucleo::Injector<D>, entry: D) -> u32 {
         injector.push(entry, |entry: &D, col: &mut [nucleo::Utf32String]| {
             // for this entry, get the column values from its Row implementation
