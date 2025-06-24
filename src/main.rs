@@ -8,6 +8,7 @@ mod mode;
 mod polymodo;
 mod windowing;
 mod xdg;
+mod persistence;
 
 use crate::ipc::{AppDescription, ClientboundMessage, ServerboundMessage};
 use crate::mode::launch::Launcher;
