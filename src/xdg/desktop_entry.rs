@@ -82,7 +82,7 @@ impl DesktopEntryIdentifier<'_> {
 
 fn find_desktop_entries_in_base_dir(
     base_dir: &Path,
-) -> impl Iterator<Item = DesktopEntryIdentifier> {
+) -> impl Iterator<Item = DesktopEntryIdentifier<'_>> {
     walkdir::WalkDir::new(base_dir)
         .follow_links(true)
         .into_iter()

@@ -174,7 +174,7 @@ async fn serve_client(polymodo: Rc<Polymodo>, client: IpcS2C) {
 
                 tokio::task::spawn_local(async move {
                     let app_result = result.await.expect("failed to join app task");
-                    let app_result = format!("{:?}", app_result);
+                    let app_result = format!("{app_result:?}");
 
                     let _ = client.send(ClientboundMessage::AppResult(app_result)).await;
                 });
