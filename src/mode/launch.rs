@@ -186,12 +186,12 @@ impl Launcher {
             self.selected_entry_idx = 0;
         }
 
+        ui.separator();
+
         // if there's no results, don't show anything.
         if self.results.is_empty() {
             return;
         }
-
-        ui.separator();
 
         self.show_results(ui);
 
