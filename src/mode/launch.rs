@@ -67,7 +67,7 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
 
             // if, for this desktop entry, there exists no SearchRow yet (with comparison being done on the source path)
             if !rows.iter().any(|row| entry.source_path == row.path()) {
-                log::debug!("new entry {}", entry.source_path.to_string_lossy(),);
+                log::trace!("new entry {}", entry.source_path.to_string_lossy(),);
                 new_entries += 1;
 
                 // add a new search entry for this desktop entry.
