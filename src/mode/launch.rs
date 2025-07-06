@@ -193,9 +193,7 @@ impl Launcher {
             return;
         }
 
-        self.show_results(ui);
-
-        let _scroll = {
+        let scroll = {
             // if up/down has been pressed, adjust the selected entry
             if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
                 self.selected_entry_idx = (self.selected_entry_idx + 1) % self.results.len();
@@ -215,6 +213,8 @@ impl Launcher {
                 false
             }
         };
+
+        self.show_results(ui, scroll);
 
         // if enter was pressed (within the textedit)
         if text_edit_rsp.lost_focus()
@@ -265,13 +265,34 @@ impl Launcher {
         .inner
     }
 
-    fn show_results(&mut self, ui: &mut egui::Ui) {
-        let results = &self.results;
-
+    fn show_results(&mut self, ui: &mut egui::Ui, scroll: bool) {
         const ICON_SIZE: f32 = 32.0;
-        egui::ScrollArea::both()
-            .min_scrolled_height(ui.available_height())
-            .min_scrolled_width(ui.available_width())
+        
+        let results = &self.results;
+        let available_height = ui.available_height();
+
+        let mut area = egui::ScrollArea::both()
+            .min_scrolled_height(available_height)
+            .min_scrolled_width(ui.available_width());
+        
+        if scroll {
+            let row_height_with_spacing = ICON_SIZE + ui.spacing().item_spacing.y;
+            let scroll_offset = (self.selected_entry_idx as f32) * row_height_with_spacing - ui.spacing().item_spacing.y;
+
+            let window_rect = ui.ctx().input(|i: &egui::InputState| i.screen_rect());
+            let window_height: f32 = window_rect.max[1] - window_rect.min[1];
+
+            let offset = scroll_offset - window_height * 0.2;
+            // clamp to the actual visible height
+            let offset = offset.clamp(
+                0.0,
+                results.len() as f32 * row_height_with_spacing - available_height - ui.spacing().item_spacing.y
+            );
+
+            area = area.vertical_scroll_offset(offset);
+        }
+        
+        area
             .show_rows(ui, ICON_SIZE, results.len(), |ui, range| {
                 ui.set_width(ui.available_width());
 
