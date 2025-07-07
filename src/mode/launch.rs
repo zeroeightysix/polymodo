@@ -284,9 +284,10 @@ impl Launcher {
 
             let offset = scroll_offset - window_height * 0.2;
             // clamp to the actual visible height
+            let max_offset = results.len() as f32 * row_height_with_spacing - available_height - ui.spacing().item_spacing.y;
             let offset = offset.clamp(
                 0.0,
-                results.len() as f32 * row_height_with_spacing - available_height - ui.spacing().item_spacing.y
+                max_offset.max(0.0),
             );
 
             area = area.vertical_scroll_offset(offset);
