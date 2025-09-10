@@ -8,6 +8,10 @@ mod polymodo;
 mod windowing;
 mod xdg;
 
+pub mod modules {
+    slint::include_modules!();
+}
+
 use crate::cli::Args;
 use crate::ipc::{AppDescription, ClientboundMessage, IpcC2S, ServerboundMessage};
 use crate::mode::launch::Launcher;
@@ -29,14 +33,14 @@ pub fn start_time() -> Instant {
 }
 
 fn main() -> anyhow::Result<()> {
-    setup()?;
+    setup_logging()?;
 
     let args = cli::Args::parse();
 
     if args.standalone {
         log::info!("Starting standalone polymodo");
 
-        run_polymodo_standalone();
+        polymodo::run_standalone();
 
         std::process::exit(0);
     }
@@ -58,7 +62,7 @@ fn main() -> anyhow::Result<()> {
             // let's become that!
             log::info!("Starting polymodo daemon");
 
-            run_polymodo_daemon()?;
+            polymodo::run_server();
 
             unreachable!();
         }
@@ -71,8 +75,6 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(-1);
         }
     }
-
-    Ok(())
 }
 
 async fn run_polymodo_client(args: Args, client: IpcC2S) -> anyhow::Result<Option<String>> {
@@ -118,7 +120,7 @@ async fn run_polymodo_client(args: Args, client: IpcC2S) -> anyhow::Result<Optio
     })
 }
 
-fn setup() -> anyhow::Result<()> {
+fn setup_logging() -> anyhow::Result<()> {
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::WARN.into())
         .from_env_lossy();
@@ -130,14 +132,4 @@ fn setup() -> anyhow::Result<()> {
 
     log_panics::init();
     Ok(())
-}
-
-/// Start polymodo in standalone mode
-fn run_polymodo_standalone() {
-    let _ = polymodo::run_standalone();
-}
-
-/// Start the polymodo server.
-fn run_polymodo_daemon() -> anyhow::Result<std::convert::Infallible> {
-    polymodo::run_server()
 }

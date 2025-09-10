@@ -1,17 +1,20 @@
-use std::collections::HashMap;
 use crate::fuzzy_search::{FuzzySearch, Row};
-use crate::windowing::app::{App, AppSender, AppSetup};
+use crate::windowing::app::{App, AppSender};
 use crate::xdg::find_desktop_entries;
 use anyhow::anyhow;
+use icon::Icons;
 use nucleo::Utf32String;
+use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::rc::Rc;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Instant;
-use icon::Icons;
+use slint::{ComponentHandle, ModelRc, VecModel};
 use tokio::sync::mpsc;
+use crate::modules::{MainWindow, TestModelItem};
 
 static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
 static ICONS: LazyLock<Icons> = LazyLock::new(Icons::new);
@@ -87,9 +90,7 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
                         }
                     });
 
-                    IconWorker {
-                        sender,
-                    }
+                    IconWorker { sender }
                 });
 
                 let _ = worker.sender.send(launcher_entry.clone());
@@ -98,7 +99,7 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
 
                 rows.push(SearchRow {
                     entry: launcher_entry,
-                    bonus_score
+                    bonus_score,
                 });
 
                 // and also add it to the fuzzy searcher
@@ -143,8 +144,8 @@ fn find_and_set_icon(launcher_entry: &Arc<LauncherEntry>) {
 pub struct Launcher {
     search: FuzzySearch<1, SearchRow>,
     results: Vec<SearchRow>,
-    finish: Option<tokio::sync::oneshot::Sender<<Self as App>::Output>>,
     bias: LauncherEntryBiasState,
+    search_task: smol::Task<std::convert::Infallible>,
 }
 
 #[derive(Debug, Clone)]
@@ -156,24 +157,11 @@ struct LauncherEntry {
     icon_resolved: OnceLock<String>,
 }
 
-impl Launcher {
-    fn finish(&mut self) {
-        if let Some(finish) = self.finish.take() {
-            // this cannot reasonably ever fail;
-            // that'd mean the `AppSetup`'s effects have been dropped,
-            // as the receiving end of the finish sender is held there.
-            let _ = finish.send(Ok(()));
-        } else {
-            log::warn!("tried to finish App, but such a message was already sent")
-        }
-    }
-}
-
 impl App for Launcher {
     type Message = Message;
     type Output = anyhow::Result<()>;
 
-    fn create(message_sender: AppSender<Self::Message>) -> AppSetup<Self, Self::Output> {
+    fn create(message_sender: AppSender<Self::Message>) -> Self {
         // read the bias from persistent state, if any.
         let bias: LauncherEntryBiasState = crate::persistence::read_state("launcher", "entry_bias")
             .ok()
@@ -184,43 +172,46 @@ impl App for Launcher {
         let search = FuzzySearch::create_with_config(config);
         let pusher = search.pusher();
 
-        let (finish, finish_recv) = tokio::sync::oneshot::channel();
-
         let entries = copy_desktop_entry_cache();
 
-        {
-            // TODO: avoid clone, bias should go through FuzzySearch instead
-            let bias = bias.history.clone();
-            tokio::task::spawn_blocking(move || scour_desktop_entries(pusher, &bias));
-        }
+        // {
+        //     // TODO: avoid clone, bias should go through FuzzySearch instead
+        //     let bias = bias.history.clone();
+        //     tokio::task::spawn_blocking(move || scour_desktop_entries(pusher, &bias));
+        // }
 
-        let launcher = Launcher {
+        let notify = search.notify();
+
+        let task = smol::spawn(async move {
+            loop {
+                notify.notified().await;
+
+                let _ = message_sender.send(Message::Search);
+            }
+        });
+
+        let main_window: MainWindow = MainWindow::new().expect("dkjfl;sdjfs");
+
+        let model = vec![
+            TestModelItem { name: "Foo".into() },
+            TestModelItem { name: "Bar".into() },
+            TestModelItem { name: "Baz".into() },
+        ];
+
+        let model = Rc::new(VecModel::from(model));
+        let model_rc: ModelRc<_> = model.clone().into();
+
+        main_window.set_texts(model_rc.clone());
+        main_window.on_btn_clicked(move || model.push(TestModelItem { name: "Bar".into() }));
+        main_window.show();
+
+        Launcher {
             // desktop_entries,
             search,
             results: entries,
-            finish: Some(finish),
             bias,
-        };
-
-        let notify = launcher.search.notify();
-
-        AppSetup::new(launcher)
-            // effect for searching
-            .spawn_local(async move {
-                loop {
-                    notify.notified().await;
-
-                    let _ = message_sender.send(Message::Search);
-                }
-            })
-            // output effect
-            .spawn_local(async move {
-                let result = finish_recv.await?;
-
-                log::info!("finish! {result:?}");
-
-                result
-            })
+            search_task: task,
+        }
     }
 
     fn on_message(&mut self, message: Self::Message) {
@@ -230,6 +221,10 @@ impl App for Launcher {
                 self.results = self.search.get_matches().into_iter().cloned().collect();
             }
         }
+    }
+
+    fn stop(self) -> Self::Output {
+        Ok(())
     }
 }
 
@@ -341,7 +336,5 @@ impl SearchRow {
 #[cfg(test)]
 mod test {
     #[test]
-    fn test() {
-
-    }
+    fn test() {}
 }

@@ -1,27 +1,87 @@
 use crate::ipc::{AppDescription, ClientboundMessage, IpcS2C, IpcServer, ServerboundMessage};
 use crate::mode::launch::Launcher;
 use crate::windowing::app;
-use crate::windowing::app::AppEvent;
-use std::collections::HashMap;
-use std::future::IntoFuture;
-use std::ops::Deref;
-use std::sync::Arc;
+use crate::windowing::app::{AppMessage, AppSender};
 use anyhow::bail;
-use futures::FutureExt;
-use tokio::sync::mpsc;
+use std::collections::HashMap;
+use std::ops::Deref;
+use std::sync::{Arc, Mutex};
+use slint::BackendSelector;
+use slint::winit_030::winit::platform::wayland::{KeyboardInteractivity, Layer, WindowAttributesWayland};
 use tokio::task::JoinHandle;
 
 struct Polymodo {
-    apps: HashMap<app::AppKey, Box<dyn app::AppDriver>>,
-    app_event_sender: mpsc::UnboundedSender<AppEvent>,
+    apps: smol::lock::Mutex<HashMap<app::AppKey, Box<dyn app::AppDriver>>>,
+    app_message_channel: (
+        smol::channel::Sender<AppMessage>,
+        smol::channel::Receiver<AppMessage>,
+    ),
+}
+
+#[derive(Debug, derive_more::Error, derive_more::Display, derive_more::From)]
+enum PolymodoError {
+    #[display("no app with app key {_0} exists")]
+    NoSuchApp(#[error(not(source))] app::AppKey),
 }
 
 impl Polymodo {
-    pub fn send_app_event(
+    pub fn new() -> Self {
+        let channel = smol::channel::unbounded::<AppMessage>();
+
+        Self {
+            apps: Default::default(),
+            app_message_channel: channel,
+        }
+    }
+
+    pub fn app_sender<M: Send + 'static>(&self, app_key: app::AppKey) -> AppSender<M> {
+        let sender = self.app_message_channel.0.clone();
+        let app_sender = AppSender::new(app_key, sender);
+
+        app_sender
+    }
+
+    /// Request an app to stop. Returns its output value, boxed as any.
+    pub async fn stop_app(
         &self,
-        app_event: AppEvent,
-    ) -> Result<(), mpsc::error::SendError<AppEvent>> {
-        self.app_event_sender.send(app_event)
+        app: app::AppKey,
+    ) -> Result<Box<dyn std::any::Any>, PolymodoError> {
+        let mut app = self
+            .apps
+            .lock()
+            .await
+            .remove(&app)
+            .ok_or(PolymodoError::NoSuchApp(app))?;
+
+        Ok(app.stop())
+    }
+
+    /// Receive one message from the messages channel (potentially waiting if there are none) and
+    /// forward it to the app it came from.
+    async fn handle_app_message(&self) {
+        let Ok(AppMessage { app_key, message }) = self.app_message_channel.1.recv().await else {
+            // `recv` only returns an error if the channel is closed (impossible: `app_message_channel` holds a sender),
+            // or full (impossible: we make an unbounded channel!),
+            // thus this should really never happen.
+            unreachable!();
+        };
+
+        // handling messages requires mutable access to the app,
+        // so we lock apps here.
+        let mut apps = self.apps.lock().await;
+        let Some(app) = apps.get_mut(&app_key) else {
+            // might happen if an app sends a message, but is stopped before that message ever gets processed.
+            log::warn!("failed to send message to app, because app does not exist.");
+            return;
+        };
+
+        app.on_message(message);
+
+        drop(apps); // explicitly release the lock, in case we ever add code below here ;)
+    }
+
+    pub fn into_handle(self) -> PolymodoHandle {
+        PolymodoHandle(Arc::new(self))
     }
 }
 
@@ -38,75 +98,33 @@ impl Deref for PolymodoHandle {
 
 impl PolymodoHandle {
     /// Create a new instance of an [app::App] and run it on the slint event loop.
+    /// Returns the associated app key.
     ///
-    /// This method returns a feature that may be awaited to get the app's return value.
-    /// The future will return `None` if the channel serving it was dropped; this is an error.
-    /// Dropping the future does not cancel the app.
-    fn spawn_app<A: app::App + 'static>(&self) -> impl std::future::Future<Output = Option<A::Output>> + Send + 'static
+    /// This method only exists on `PolymodoHandle`, as a new handle is created to pass onto the event loop.
+    pub fn spawn_app<A>(&self) -> anyhow::Result<app::AppKey>
     where
+        A: app::App + 'static,
         A::Message: Send + 'static,
-        A::Output: Send + 'static,
     {
         // create a new key for this app.
         // (it's just a number)
         let key = app::new_app_key();
-        let surf_driver_app_sender = self.0.app_event_sender.clone();
-        let send = app::AppSender::new(key, surf_driver_app_sender.clone());
-
-        let app::AppSetup { app, mut effects } = A::create(send);
-
-        let (result_sender, result_receiver) = oneshot::channel();
+        let app_sender = self.app_sender(key);
+        let handle = self.clone();
 
         slint::invoke_from_event_loop(move || {
-            slint::spawn_local(async_compat::Compat::new(async move {
-                let output = effects.join_next().await.unwrap().unwrap(); // TODO: we need an abstraction on AppSetup to guarantee an effect
+            // Create the app and its driver (wrapper)
+            let app = A::create(app_sender);
+            let driver = app::driver_for(key, app);
 
-                // the app has finished, so we must remove it now.
-                if let Err(e) = surf_driver_app_sender.send(AppEvent::DestroyApp { app_key: key }) {
-                    log::error!("failed to send destruction event to `surf_driver_app_sender`: that's pretty bad");
-                    log::error!("{e:?}");
-                }
-
-                let _ = result_sender.send(output);
-            })).expect("an event loop");
-        }).expect("an event loop");
-
-        result_receiver.into_future()
-            .map(|recv_result| recv_result.ok())
-    }
-}
-
-fn setup() -> anyhow::Result<PolymodoHandle> {
-    // create the app message channel. this is the main entrypoint for apps to asynchronously
-    // talk to polymodo, or send messages to themselves to be handled on the UI thread.
-    let (sender, mut receiver) = mpsc::unbounded_channel::<AppEvent>();
-
-    let polymodo_handle = PolymodoHandle(Arc::new(Polymodo {
-        apps: Default::default(),
-        app_event_sender: sender,
-    }));
-
-    {
-        let polymodo_handle = polymodo_handle.clone();
-
-        // polymodo's logic should run as a future on the event loop thread,
-        // so first we have to make sure we're on that thread:
-        slint::invoke_from_event_loop(move || {
-            // spawn a future that handles polymodo's app logic
-            let _ = slint::spawn_local(async_compat::Compat::new(async move {
-                while let Some(event) = receiver.recv().await {
-                    // polymodo_handle.handle_event()
-                    todo!()
-                }
-
-                // we got a None out of the receiver at this point,
-                // meaning all senders have disappeared!
-                log::warn!("polymodo app message task finished");
-            }));
+            // Add it to the list
+            let mut apps = handle.apps.lock_blocking();
+            apps.insert(key, Box::new(driver));
+            drop(apps);
         })?;
-    }
 
-    Ok(polymodo_handle)
+        Ok(key)
+    }
 }
 
 pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
@@ -114,7 +132,7 @@ pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
     // TODO
     // let ipc_server = crate::ipc::create_ipc_server().await?; // TODO: try? here is probably not good
 
-    let poly = setup()?;
+    let poly = Polymodo::new().into_handle();
 
     // TODO
     // let _server_task = create_server_task(poly.clone(), ipc_server);
@@ -127,16 +145,28 @@ pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
 }
 
 pub fn run_standalone() -> anyhow::Result<()> {
-    let poly = setup()?;
+    BackendSelector::default()
+        .with_winit_window_attributes_hook(|mut attrs| {
+            attrs.platform = Some(Box::new(
+                WindowAttributesWayland::default()
+                    .with_layer_shell()
+                    .with_layer(Layer::Overlay)
+                    .with_keyboard_interactivity(KeyboardInteractivity::OnDemand),
+            ));
+            attrs
+        })
+        .select()
+        .expect("failed to select");
 
-    // The output of the app launched is used as the return value for the standalone run:
-    let Some(result) = smol::block_on(poly.spawn_app::<Launcher>()) else {
-        bail!("failed to await app result");
-    };
+    let poly = Polymodo::new().into_handle();
+
+    poly.spawn_app::<Launcher>()
+        .expect("Failed to spawn app");
 
     slint::run_event_loop_until_quit()?;
-    
-    result
+
+    Ok(())
+    // result
 }
 
 fn create_server_task(
@@ -203,12 +233,7 @@ async fn serve_client(polymodo: PolymodoHandle, client: IpcS2C) {
                 let result = polymodo.spawn_app::<Launcher>();
                 let client = client.clone();
 
-                tokio::task::spawn_local(async move {
-                    let app_result = result.await.expect("failed to join app task");
-                    let app_result = format!("{app_result:?}");
-
-                    let _ = client.send(ClientboundMessage::AppResult(app_result)).await;
-                });
+                // TODO: polymodo.wait_for_stop(app_key).await
 
                 Ok(())
             }

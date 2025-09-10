@@ -1,0 +1,72 @@
+import { Button, VerticalBox, LineEdit, Palette, ListView } from "std-widgets.slint";
+
+export struct TestModelItem {
+    name: string
+}
+
+export component MainWindow inherits Window {
+    background: transparent;
+    no-frame: true;
+
+    in property <[TestModelItem]> texts;
+    callback btn_clicked <=> click_me_btn.clicked;
+
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
+
+    background := Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #000000cc;
+
+        border-radius: 12px;
+        border-color: darkgrey;
+        border-width: 1px;
+    }
+
+    width: 200px;
+    height: 200px;
+
+    VerticalBox {
+        Rectangle {
+            clip: true;
+
+            search_box := Rectangle {
+                height: 1rem;
+
+                TextInput {
+                    width: max(parent.width, self.preferred-width);
+                    font-size: 1.2rem;
+                    vertical-alignment: center;
+
+                    private property <length> margin: 0rem;
+                    cursor-position-changed(cursor-position) => {
+                        if (cursor-position.x + self.x < margin) {
+                            self.x = - cursor-position.x + margin;
+                        } else if (cursor-position.x + self.x > parent.width - margin - self.text-cursor-width) {
+                            self.x = parent.width - cursor-position.x - margin - self.text-cursor-width;
+                        }
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            for item in texts : Text {
+                text: item.name;
+            }
+        }
+
+        label := Text {
+            text: "Button not clicked";
+        }
+        click_me_btn := Button {
+            text: "Click Me";
+
+            clicked => {
+                label.text = " Button clicked";
+            }
+        }
+    }
+}

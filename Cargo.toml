@@ -34,6 +34,7 @@ rand = "0.9.0"
 bincode = "2.0.1"
 walkdir = "2.5.0"
 icon = "0.1.2"
-oneshot = { version = "0.1.11", features = ["async"] }
-futures = { version = "0.3.31", default-features = false, features = ["std"] }
 smol = "2.0.2"
+
+[build-dependencies]
+slint-build = { git = "https://github.com/zeroeightysix/slint" }
