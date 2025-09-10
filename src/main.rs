@@ -1,28 +1,24 @@
-mod app_surface_driver;
 mod cli;
 mod config;
 mod fuzzy_search;
 mod ipc;
-mod live_handle;
 mod mode;
+mod persistence;
 mod polymodo;
 mod windowing;
 mod xdg;
-mod persistence;
 
-use crate::ipc::{AppDescription, ClientboundMessage, ServerboundMessage};
+use crate::cli::Args;
+use crate::ipc::{AppDescription, ClientboundMessage, IpcC2S, ServerboundMessage};
 use crate::mode::launch::Launcher;
 use clap::Parser;
 use std::io::ErrorKind;
 use std::sync::OnceLock;
 use std::time::Instant;
-use tokio::task::LocalSet;
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
-
-static RUNTIME: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 
 /// Some starting time.
 ///
@@ -32,14 +28,7 @@ pub fn start_time() -> Instant {
     *LOCK.get_or_init(Instant::now)
 }
 
-/// Returns a handle to the application's tokio runtime, to be used to spawn tasks
-/// from threads not handled by tokio.
-pub fn runtime() -> tokio::runtime::Handle {
-    RUNTIME.get().cloned().expect("the runtime wasn't set")
-}
-
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     setup()?;
 
     let args = cli::Args::parse();
@@ -47,51 +36,21 @@ async fn main() -> anyhow::Result<()> {
     if args.standalone {
         log::info!("Starting standalone polymodo");
 
-        run_polymodo_standalone().await;
+        run_polymodo_standalone();
 
         std::process::exit(0);
     }
 
     // try connecting to a running polymodo daemon.
-    match ipc::connect_to_polymodo_daemon().await {
+    match ipc::connect_to_polymodo_daemon() {
         Ok(client) => {
             // ok, we have a client, let's talk with the server!
+            // the client is written in async code, so set up a runtime here.
+            let rt = tokio::runtime::Builder::new_current_thread().build()?;
 
-            // did we request a single app instance?
-            if args.single {
-                client
-                    .send(ServerboundMessage::IsRunning(
-                        std::any::type_name::<Launcher>().to_string(),
-                    ))
-                    .await
-                    .expect("failed to send");
-                let message = client.recv().await.expect("failed to recv");
+            let return_value = rt.block_on(run_polymodo_client(args, client));
 
-                match message {
-                    ClientboundMessage::Running(name, false)
-                        if name == std::any::type_name::<Launcher>() =>
-                    {
-                        // ok!
-                    }
-                    _ => {
-                        println!("App already running!");
-                        return Ok(());
-                    }
-                }
-            }
-
-            client
-                .send(ServerboundMessage::Spawn(AppDescription::Launcher))
-                .await
-                .expect("failed to send");
-
-            println!("{:?}", client.recv().await);
-
-            client
-                .send(ServerboundMessage::Goodbye)
-                .await
-                .expect("send failed");
-            client.shutdown().await.expect("shutdown failed");
+            todo!()
         }
         Err(err) if err.kind() == ErrorKind::ConnectionRefused => {
             // ConnectionRefused happens when there is no one listening on the other end, i.e.
@@ -99,7 +58,9 @@ async fn main() -> anyhow::Result<()> {
             // let's become that!
             log::info!("Starting polymodo daemon");
 
-            run_polymodo_daemon().await;
+            run_polymodo_daemon()?;
+
+            unreachable!();
         }
         Err(e) => {
             // errors other than ConnectionRefused are considered fatal, as something other went
@@ -114,11 +75,50 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn setup() -> anyhow::Result<()> {
-    RUNTIME
-        .set(tokio::runtime::Handle::current())
-        .expect("failed to set the runtime");
+async fn run_polymodo_client(args: Args, client: IpcC2S) -> anyhow::Result<Option<String>> {
+    // did we request a single app instance?
+    if args.single {
+        client
+            .send(ServerboundMessage::IsRunning(
+                std::any::type_name::<Launcher>().to_string(),
+            ))
+            .await
+            .expect("failed to send");
+        let message = client.recv().await.expect("failed to recv");
 
+        match message {
+            ClientboundMessage::Running(name, false)
+                if name == std::any::type_name::<Launcher>() =>
+            {
+                // ok!
+            }
+            _ => {
+                println!("App already running!");
+                return Ok(None);
+            }
+        }
+    }
+
+    client
+        .send(ServerboundMessage::Spawn(AppDescription::Launcher))
+        .await
+        .expect("failed to send");
+
+    let app_result = client.recv().await?;
+
+    client
+        .send(ServerboundMessage::Goodbye)
+        .await
+        .expect("send failed");
+    client.shutdown().await.expect("shutdown failed");
+
+    Ok(match app_result {
+        ClientboundMessage::AppResult(result) => Some(result),
+        _ => None,
+    })
+}
+
+fn setup() -> anyhow::Result<()> {
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::WARN.into())
         .from_env_lossy();
@@ -133,21 +133,11 @@ fn setup() -> anyhow::Result<()> {
 }
 
 /// Start polymodo in standalone mode
-async fn run_polymodo_standalone() {
-    LocalSet::new()
-        .run_until(async move {
-            let _ = polymodo::run_standalone().await;
-        })
-        .await;
+fn run_polymodo_standalone() {
+    let _ = polymodo::run_standalone();
 }
 
 /// Start the polymodo server.
-async fn run_polymodo_daemon() {
-    LocalSet::new()
-        .run_until(async move {
-            let Err(e) = polymodo::run_server().await;
-
-            log::error!("Error running polymodo: {e}");
-        })
-        .await;
+fn run_polymodo_daemon() -> anyhow::Result<std::convert::Infallible> {
+    polymodo::run_server()
 }

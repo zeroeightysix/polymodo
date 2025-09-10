@@ -177,7 +177,7 @@ fn bind_listener(addr: SocketAddr) -> std::io::Result<UnixListener> {
     Ok(listener)
 }
 
-pub async fn connect_to_polymodo_daemon() -> std::io::Result<IpcC2S> {
+pub fn connect_to_polymodo_daemon() -> std::io::Result<IpcC2S> {
     let addr = get_polymodo_socket_addr();
     let stream = std::os::unix::net::UnixStream::connect_addr(&addr)?;
     stream.set_nonblocking(true)?;

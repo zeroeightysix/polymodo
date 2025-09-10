@@ -1,12 +1,9 @@
 use std::collections::HashMap;
 use crate::fuzzy_search::{FuzzySearch, Row};
-use crate::windowing::app::{App, AppSender, AppSetup, SurfaceEvent};
-use crate::windowing::surface::LayerSurfaceOptions;
+use crate::windowing::app::{App, AppSender, AppSetup};
 use crate::xdg::find_desktop_entries;
 use anyhow::anyhow;
-use egui::{Color32, CornerRadius, FontId, Response, RichText, Widget};
 use nucleo::Utf32String;
-use smithay_client_toolkit::shell::wlr_layer::Layer;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -144,11 +141,8 @@ fn find_and_set_icon(launcher_entry: &Arc<LauncherEntry>) {
 }
 
 pub struct Launcher {
-    search_input: String,
-    focus_search: bool,
     search: FuzzySearch<1, SearchRow>,
     results: Vec<SearchRow>,
-    selected_entry_idx: usize,
     finish: Option<tokio::sync::oneshot::Sender<<Self as App>::Output>>,
     bias: LauncherEntryBiasState,
 }
@@ -163,184 +157,6 @@ struct LauncherEntry {
 }
 
 impl Launcher {
-    pub fn layer_surface_options() -> LayerSurfaceOptions<'static> {
-        LayerSurfaceOptions {
-            namespace: Some("polymodo"),
-            width: 500,
-            height: 600,
-            layer: Layer::Overlay,
-            ..Default::default()
-        }
-    }
-
-    fn app_launcher_ui(&mut self, ui: &mut egui::Ui) {
-        let text_edit_rsp = self.show_search_text_edit(ui);
-
-        // if the text input has changed,
-        if text_edit_rsp.changed() {
-            // make a new search.
-            self.search.search::<0>(self.search_input.as_str());
-            // and reset the selection
-            // TODO: perhaps if in the new search result, the selected item persist,
-            // adjust the selection to "follow" it.
-            self.selected_entry_idx = 0;
-        }
-
-        ui.separator();
-
-        // if there's no results, don't show anything.
-        if self.results.is_empty() {
-            return;
-        }
-
-        let scroll = {
-            // if up/down has been pressed, adjust the selected entry
-            if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
-                self.selected_entry_idx = (self.selected_entry_idx + 1) % self.results.len();
-
-                true
-            } else if ui.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
-                if self.selected_entry_idx == 0 {
-                    self.selected_entry_idx = self.results.len() - 1;
-                } else {
-                    self.selected_entry_idx =
-                        (self.selected_entry_idx.saturating_sub(1)) % self.results.len();
-                }
-
-                true
-            } else {
-                // the selected entry didn't change, so we shouldn't scroll to its row.
-                false
-            }
-        };
-
-        self.show_results(ui, scroll);
-
-        // if enter was pressed (within the textedit)
-        if text_edit_rsp.lost_focus()
-            && ui.input(|i| i.key_pressed(egui::Key::Enter))
-            && !self.results.is_empty()
-        {
-            let entry = self.results.get(self.selected_entry_idx);
-            if let Some(entry) = entry.map(|e| e.entry.as_ref()) {
-                // boost the bias for this entry and 'demote' others
-                let bias = &mut self.bias;
-                bias.history.values_mut()
-                    .for_each(|avg| *avg = decrement_history_value(*avg));
-
-                let this_entry = bias.history.entry(entry.path.clone())
-                    .or_default();
-                *this_entry = bump_history_value(*this_entry);
-
-                if let Err(e) = crate::persistence::write_state("launcher", "entry_bias", &*bias) {
-                    log::error!("failed to save history state: {e}");
-                }
-
-                if let Err(e) = launch(entry) {
-                    log::error!("failed to launch with error {e}");
-                }
-
-                self.finish();
-            }
-        }
-    }
-
-    fn show_search_text_edit(&mut self, ui: &mut egui::Ui) -> Response {
-        ui.horizontal(|ui| {
-            ui.label("🔍"); // TODO: vertical center (line_height = row_height + margin)
-
-            let text_edit = egui::TextEdit::singleline(&mut self.search_input)
-                .desired_width(f32::INFINITY)
-                .frame(false)
-                .hint_text("Search")
-                .show(ui)
-                .response;
-
-            if std::mem::replace(&mut self.focus_search, false) {
-                text_edit.request_focus();
-            }
-
-            text_edit
-        })
-        .inner
-    }
-
-    fn show_results(&mut self, ui: &mut egui::Ui, scroll: bool) {
-        const ICON_SIZE: f32 = 32.0;
-        
-        let results = &self.results;
-        let available_height = ui.available_height();
-
-        let mut area = egui::ScrollArea::both()
-            .min_scrolled_height(available_height)
-            .min_scrolled_width(ui.available_width());
-        
-        if scroll {
-            let row_height_with_spacing = ICON_SIZE + ui.spacing().item_spacing.y;
-            let scroll_offset = (self.selected_entry_idx as f32) * row_height_with_spacing - ui.spacing().item_spacing.y;
-
-            let window_rect = ui.ctx().input(|i: &egui::InputState| i.screen_rect());
-            let window_height: f32 = window_rect.max[1] - window_rect.min[1];
-
-            let offset = scroll_offset - window_height * 0.2;
-            // clamp to the actual visible height
-            let max_offset = results.len() as f32 * row_height_with_spacing - available_height - ui.spacing().item_spacing.y;
-            let offset = offset.clamp(
-                0.0,
-                max_offset.max(0.0),
-            );
-
-            area = area.vertical_scroll_offset(offset);
-        }
-        
-        area
-            .show_rows(ui, ICON_SIZE, results.len(), |ui, range| {
-                ui.set_width(ui.available_width());
-
-                for idx in range {
-                    let result = &results[idx];
-                    fn display_result(result: &SearchRow, ui: &mut egui::Ui) {
-                        ui.horizontal_centered(|ui| {
-                            ui.set_height(ui.available_height());
-
-                            if let Some(icon) = result.icon() {
-                                egui::Image::new(icon)
-                                    .fit_to_exact_size(egui::Vec2::splat(ICON_SIZE))
-                                    .ui(ui);
-                            } else {
-                                ui.add_space(ICON_SIZE + ui.spacing().item_spacing.x);
-                            }
-
-                            ui.label(
-                                RichText::new(result.name())
-                                    .font(FontId::proportional(ICON_SIZE - 8.0)),
-                            );
-                        });
-                    }
-
-                    // fixed height for a row
-                    ui.scope(|ui| {
-                        ui.set_height(ICON_SIZE);
-
-                        if self.selected_entry_idx == idx {
-                            egui::Frame::new()
-                                .fill(Color32::from_gray(64))
-                                .outer_margin(egui::Margin::same(-2))
-                                .inner_margin(egui::Margin::same(2))
-                                .corner_radius(4.0)
-                                .show(ui, |ui| {
-                                    ui.set_height(ui.available_height());
-                                    ui.set_width(ui.available_width());
-                                    display_result(result, ui);
-                                });
-                        } else {
-                            display_result(result, ui);
-                        }
-                    });
-                }
-            });
-    }
-
     fn finish(&mut self) {
         if let Some(finish) = self.finish.take() {
             // this cannot reasonably ever fail;
@@ -379,12 +195,9 @@ impl App for Launcher {
         }
 
         let launcher = Launcher {
-            search_input: String::new(),
-            focus_search: true,
             // desktop_entries,
             search,
             results: entries,
-            selected_entry_idx: 0,
             finish: Some(finish),
             bias,
         };
@@ -416,33 +229,6 @@ impl App for Launcher {
                 self.search.tick();
                 self.results = self.search.get_matches().into_iter().cloned().collect();
             }
-        }
-    }
-
-    fn on_surface_event(&mut self, surface_event: SurfaceEvent) {
-        #[allow(clippy::single_match)]
-        match surface_event {
-            SurfaceEvent::KeyboardLeave(_) => self.finish(),
-            _ => {}
-        }
-    }
-
-    fn render(&mut self, ctx: &egui::Context) {
-        let mut frame = egui::Frame::window(&ctx.style());
-        frame.shadow.offset[1] = frame.shadow.offset[0];
-        frame.fill = Color32::from_black_alpha(210);
-        frame.inner_margin = egui::Margin::same(8);
-        frame.corner_radius = CornerRadius::same(16);
-
-        egui::CentralPanel::default()
-            .frame(frame.outer_margin((frame.shadow.blur + frame.shadow.spread + 1) as f32))
-            .show(ctx, |ui| {
-                self.app_launcher_ui(ui);
-            });
-
-        // Exit when escape is pressed
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.finish();
         }
     }
 }
