@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
             // let's become that!
             log::info!("Starting polymodo daemon");
 
-            polymodo::run_server();
+            polymodo::run_server()?;
 
             unreachable!();
         }

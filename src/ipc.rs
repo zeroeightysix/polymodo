@@ -1,14 +1,14 @@
+use crate::windowing::app::AppName;
 use bincode::error::DecodeError;
 use bincode::{Decode, Encode};
 use derive_more::{Display, Error, From};
-use smol::net::unix::{UnixListener, UnixStream};
-use std::net::Shutdown;
-use std::os::unix::net::SocketAddr;
-use std::rc::Rc;
-use smol::Async;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use smol::lock::Mutex;
-use crate::windowing::app::AppName;
+use smol::net::unix::{UnixListener, UnixStream};
+use smol::Async;
+use std::net::Shutdown;
+use std::os::unix::net::SocketAddr;
+use std::sync::Arc;
 
 const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
@@ -44,7 +44,7 @@ pub enum IpcReceiveError {
 
 pub struct IpcClient<In, Out> {
     stream: UnixStream,
-    buffer: Rc<Mutex<Vec<u8>>>,
+    buffer: Arc<Mutex<Vec<u8>>>,
     addr: SocketAddr,
     marker: std::marker::PhantomData<(In, Out)>,
 }
@@ -115,7 +115,7 @@ impl<A, B> Clone for IpcClient<A, B> {
     fn clone(&self) -> Self {
         Self {
             stream: self.stream.clone(),
-            buffer: Rc::clone(&self.buffer),
+            buffer: Arc::clone(&self.buffer),
             addr: self.addr.clone(),
             marker: Default::default(),
         }

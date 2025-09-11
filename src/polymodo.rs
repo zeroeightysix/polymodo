@@ -1,4 +1,4 @@
-use crate::ipc::{AppSpawnOptions, ClientboundMessage, IpcS2C, ServerboundMessage};
+use crate::ipc::{AppSpawnOptions, ClientboundMessage, IpcS2C, IpcServer, ServerboundMessage};
 use crate::mode::launch::Launcher;
 use crate::windowing::app;
 use crate::windowing::app::{AppMessage, AppSender};
@@ -136,12 +136,15 @@ pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
     // set up the polymodo daemon socket for clients to connect to
     let ipc_server = crate::ipc::create_ipc_server()?; // TODO: try? here is probably not good
 
+    setup_slint_backend();
+
     let poly = Polymodo::new().into_handle();
 
-    // TODO
-    // let _server_task = create_server_task(poly.clone(), ipc_server);
+    let _task = smol::spawn(accept_clients(poly.clone(), ipc_server));
 
-    drop(poly.spawn_app::<Launcher>());
+    let key = poly.spawn_app::<Launcher>()?;
+
+    log::info!("spawned launcher with key {key}");
 
     slint::run_event_loop_until_quit()?;
 
@@ -149,17 +152,7 @@ pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
 }
 
 pub fn run_standalone() -> anyhow::Result<()> {
-    BackendSelector::default()
-        .with_winit_window_attributes_hook(|mut attrs| {
-            attrs.platform = Some(Box::new(
-                WindowAttributesWayland::layer_shell()
-                    .with_layer(Layer::Overlay)
-                    .with_keyboard_interactivity(KeyboardInteractivity::OnDemand),
-            ));
-            attrs
-        })
-        .select()
-        .expect("failed to select");
+    setup_slint_backend();
 
     let poly = Polymodo::new().into_handle();
 
@@ -171,28 +164,35 @@ pub fn run_standalone() -> anyhow::Result<()> {
     // result
 }
 
-// TODO
-// fn create_server_task(
-//     polymodo: PolymodoHandle,
-//     ipc_server: IpcServer,
-// ) -> JoinHandle<std::convert::Infallible> {
-//     tokio::task::spawn_local(async move {
-//         loop {
-//             let Ok(client) = ipc_server.accept().await else {
-//                 continue;
-//             };
-//
-//             log::debug!("accept new connection at {:?}", client.addr());
-//
-//             // explicit drop: dropping a JoinHandle does not cancel the task;
-//             // we're simply not interested in ever joining this task
-//             drop(tokio::task::spawn_local(serve_client(
-//                 polymodo.clone(),
-//                 client,
-//             )));
-//         }
-//     })
-// }
+fn setup_slint_backend() {
+    BackendSelector::default()
+        .with_winit_window_attributes_hook(|mut attrs| {
+            attrs.platform = Some(Box::new(
+                WindowAttributesWayland::layer_shell()
+                    .with_layer(Layer::Overlay)
+                    .with_keyboard_interactivity(KeyboardInteractivity::OnDemand),
+            ));
+            attrs
+        })
+        .select()
+        .expect("failed to select");
+}
+
+async fn accept_clients(
+    polymodo: PolymodoHandle,
+    ipc_server: IpcServer,
+) {
+    loop {
+        let Ok(client) = ipc_server.accept().await else {
+            continue;
+        };
+
+        log::debug!("accept new connection at {:?}", client.addr());
+
+        let task = smol::spawn(serve_client(polymodo.clone(), client));
+        task.detach(); // detach so it doesn't cancel when we drop `task`
+    }
+}
 
 /// Given an [IpcClient], perform the read loop, serving any requests made by the client.
 async fn serve_client(polymodo: PolymodoHandle, client: IpcS2C) {
