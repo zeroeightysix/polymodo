@@ -146,8 +146,7 @@ pub fn run_standalone() -> anyhow::Result<()> {
     BackendSelector::default()
         .with_winit_window_attributes_hook(|mut attrs| {
             attrs.platform = Some(Box::new(
-                WindowAttributesWayland::default()
-                    .with_layer_shell()
+                WindowAttributesWayland::layer_shell()
                     .with_layer(Layer::Overlay)
                     .with_keyboard_interactivity(KeyboardInteractivity::OnDemand),
             ));

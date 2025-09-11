@@ -20,7 +20,7 @@ strum = { version = "0.27.1", features = ["derive"] }
 clap = { version = "4.5", features = ["derive"] }
 
 # Windowing
-slint = { git = "https://github.com/zeroeightysix/slint", rev = "ff0c3d6", default-features = false, features = ["std", "compat-1-2", "backend-winit-wayland", "renderer-skia-opengl", "unstable-winit-030"] }
+slint = { git = "https://github.com/zeroeightysix/slint", rev = "e3b0728", default-features = false, features = ["std", "compat-1-2", "backend-winit-wayland", "renderer-skia-opengl", "unstable-winit-030"] }
 
 # Launcher
 nix = { version = "0.30.1", features = ["process"] }
