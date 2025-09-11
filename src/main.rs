@@ -7,6 +7,7 @@ mod persistence;
 mod polymodo;
 mod windowing;
 mod xdg;
+mod notify;
 
 pub mod modules {
     slint::include_modules!();
@@ -50,9 +51,7 @@ fn main() -> anyhow::Result<()> {
         Ok(client) => {
             // ok, we have a client, let's talk with the server!
             // the client is written in async code, so set up a runtime here.
-            let rt = tokio::runtime::Builder::new_current_thread().build()?;
-
-            let return_value = rt.block_on(run_polymodo_client(args, client));
+            let _ = smol::block_on(run_polymodo_client(args, client));
 
             todo!()
         }

@@ -9,7 +9,7 @@ pub struct FuzzySearch<const C: usize, D: Sync + Send + 'static> {
     injector: nucleo::Injector<D>,
     // notification semaphore for when nucleo results are available;
     // notified any time a user may read matches and get a new result from it
-    notify: std::sync::Arc<tokio::sync::Notify>,
+    notify: crate::notify::Notify,
     query: String,
 }
 
@@ -44,7 +44,7 @@ impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
         if !status.running && status.changed {
             // somehow, the worker finished immediately,
             // so immediately notify of the results.
-            self.notify.notify_one();
+            self.notify.notify();
         }
     }
 
@@ -63,7 +63,7 @@ impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
         self.nucleo.tick(0)
     }
 
-    pub fn notify(&self) -> std::sync::Arc<tokio::sync::Notify> {
+    pub fn notify(&self) -> crate::notify::Notify {
         self.notify.clone()
     }
 
@@ -86,13 +86,13 @@ where
 
     /// Create a new [FuzzySearch] with the provided nucleo configuration
     pub fn create_with_config(config: nucleo::Config) -> Self {
-        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let notify = crate::notify::Notify::new();
         let nucleo = {
             let notify = notify.clone();
             nucleo::Nucleo::new(
                 config,
                 std::sync::Arc::new(Self::score_tail),
-                std::sync::Arc::new(move || notify.notify_one()),
+                std::sync::Arc::new(move || notify.notify()),
                 None,
                 C as u32,
             )

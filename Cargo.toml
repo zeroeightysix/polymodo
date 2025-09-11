@@ -15,8 +15,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1.0.95"
 derive_more = { version = "2.0.1", features = ["display", "error", "from"] }
 strum = { version = "0.27.1", features = ["derive"] }
-tokio = { version = "1", features = ["rt", "sync", "net", "time", "macros", "io-util", "rt-multi-thread"] }
-async-compat = "0.2.5"
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }

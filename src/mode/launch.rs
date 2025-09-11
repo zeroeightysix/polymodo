@@ -13,7 +13,6 @@ use std::rc::Rc;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Instant;
 use slint::{ComponentHandle, ModelRc, VecModel};
-use tokio::sync::mpsc;
 use crate::modules::{MainWindow, TestModelItem};
 
 static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
@@ -33,7 +32,8 @@ fn copy_desktop_entry_cache() -> Vec<SearchRow> {
 }
 
 struct IconWorker {
-    sender: mpsc::UnboundedSender<Arc<LauncherEntry>>,
+    sender: smol::channel::Sender<Arc<LauncherEntry>>,
+    task: smol::Task<Option<()>>,
 }
 
 fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
@@ -53,6 +53,7 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
         let mut rows = DESKTOP_ENTRIES.lock().unwrap();
         let mut new_entries = 0u32;
 
+        // TODO: dropping this will cancel the work task
         let mut icon_worker: Option<IconWorker> = None;
 
         for entry in entries {
@@ -81,16 +82,16 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
 
                 // try locating the icon for this desktop entry, if any, and which may have to be deferred:
                 let worker = icon_worker.get_or_insert_with(|| {
-                    let (sender, mut receiver) = mpsc::unbounded_channel();
-                    let _handle = tokio::task::spawn_blocking(move || -> Option<()> {
+                    let (sender, mut receiver) = smol::channel::unbounded();
+                    let task = smol::unblock(move || -> Option<()> {
                         loop {
-                            let entry = receiver.blocking_recv()?;
+                            let entry = receiver.recv_blocking().ok()?;
 
                             find_and_set_icon(&entry);
                         }
                     });
 
-                    IconWorker { sender }
+                    IconWorker { sender, task }
                 });
 
                 let _ = worker.sender.send(launcher_entry.clone());
@@ -184,7 +185,7 @@ impl App for Launcher {
 
         let task = smol::spawn(async move {
             loop {
-                notify.notified().await;
+                notify.acquire().await;
 
                 let _ = message_sender.send(Message::Search);
             }

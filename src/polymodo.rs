@@ -2,13 +2,11 @@ use crate::ipc::{AppDescription, ClientboundMessage, IpcS2C, IpcServer, Serverbo
 use crate::mode::launch::Launcher;
 use crate::windowing::app;
 use crate::windowing::app::{AppMessage, AppSender};
-use anyhow::bail;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use slint::BackendSelector;
 use slint::winit_030::winit::platform::wayland::{KeyboardInteractivity, Layer, WindowAttributesWayland};
-use tokio::task::JoinHandle;
 
 struct Polymodo {
     apps: smol::lock::Mutex<HashMap<app::AppKey, Box<dyn app::AppDriver>>>,
@@ -139,7 +137,7 @@ pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
 
     drop(poly.spawn_app::<Launcher>());
 
-    tokio::task::block_in_place(slint::run_event_loop_until_quit)?;
+    slint::run_event_loop_until_quit()?;
 
     unreachable!()
 }
@@ -169,27 +167,28 @@ pub fn run_standalone() -> anyhow::Result<()> {
     // result
 }
 
-fn create_server_task(
-    polymodo: PolymodoHandle,
-    ipc_server: IpcServer,
-) -> JoinHandle<std::convert::Infallible> {
-    tokio::task::spawn_local(async move {
-        loop {
-            let Ok(client) = ipc_server.accept().await else {
-                continue;
-            };
-
-            log::debug!("accept new connection at {:?}", client.addr());
-
-            // explicit drop: dropping a JoinHandle does not cancel the task;
-            // we're simply not interested in ever joining this task
-            drop(tokio::task::spawn_local(serve_client(
-                polymodo.clone(),
-                client,
-            )));
-        }
-    })
-}
+// TODO
+// fn create_server_task(
+//     polymodo: PolymodoHandle,
+//     ipc_server: IpcServer,
+// ) -> JoinHandle<std::convert::Infallible> {
+//     tokio::task::spawn_local(async move {
+//         loop {
+//             let Ok(client) = ipc_server.accept().await else {
+//                 continue;
+//             };
+//
+//             log::debug!("accept new connection at {:?}", client.addr());
+//
+//             // explicit drop: dropping a JoinHandle does not cancel the task;
+//             // we're simply not interested in ever joining this task
+//             drop(tokio::task::spawn_local(serve_client(
+//                 polymodo.clone(),
+//                 client,
+//             )));
+//         }
+//     })
+// }
 
 /// Given an [IpcClient], perform the read loop, serving any requests made by the client.
 async fn serve_client(polymodo: PolymodoHandle, client: IpcS2C) {
