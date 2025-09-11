@@ -1,5 +1,5 @@
-use crate::windowing::app;
-use crate::windowing::app::{AppMessage, AppSender};
+use crate::app;
+use crate::app::{AppMessage, AppSender};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;

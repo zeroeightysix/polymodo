@@ -6,9 +6,9 @@ mod mode;
 mod notify;
 mod persistence;
 mod polymodo;
-mod windowing;
 mod xdg;
 mod server;
+pub mod app;
 
 pub mod modules {
     slint::include_modules!();
@@ -16,7 +16,7 @@ pub mod modules {
 
 use crate::cli::Args;
 use crate::ipc::{AppSpawnOptions, ClientboundMessage, IpcC2S, ServerboundMessage};
-use crate::windowing::app::AppName;
+use app::AppName;
 use clap::Parser;
 use std::io::ErrorKind;
 use tracing::metadata::LevelFilter;

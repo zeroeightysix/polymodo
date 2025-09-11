@@ -1,5 +1,5 @@
 use crate::fuzzy_search::{FuzzySearch, Row};
-use crate::windowing::app::{App, AppName, AppSender};
+use crate::app::{App, AppName, AppSender};
 use crate::xdg::find_desktop_entries;
 use anyhow::anyhow;
 use icon::Icons;

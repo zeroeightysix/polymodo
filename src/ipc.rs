@@ -1,4 +1,4 @@
-use crate::windowing::app::AppName;
+use crate::app::AppName;
 use bincode::error::DecodeError;
 use bincode::{Decode, Encode};
 use derive_more::{Display, Error, From};
