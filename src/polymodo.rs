@@ -1,16 +1,10 @@
-use crate::ipc::{AppSpawnOptions, ClientboundMessage, IpcS2C, IpcServer, ServerboundMessage};
-use crate::mode::launch::Launcher;
 use crate::windowing::app;
 use crate::windowing::app::{AppMessage, AppSender};
-use slint::winit_030::winit::platform::wayland::{
-    KeyboardInteractivity, Layer, WindowAttributesWayland,
-};
-use slint::BackendSelector;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
 
-struct Polymodo {
+pub struct Polymodo {
     apps: smol::lock::Mutex<HashMap<app::AppKey, Box<dyn app::AppDriver>>>,
     app_message_channel: (
         smol::channel::Sender<AppMessage>,
@@ -80,7 +74,7 @@ impl Polymodo {
     }
     
     /// Is an app with this `app_name` running?
-    async fn is_app_running(&self, app_name: app::AppName) -> bool {
+    pub async fn is_app_running(&self, app_name: app::AppName) -> bool {
         let apps = self.apps.lock().await;
         apps.values().any(|x| x.app_name() == app_name)
     }
@@ -91,7 +85,7 @@ impl Polymodo {
 }
 
 #[derive(Clone)]
-struct PolymodoHandle(Arc<Polymodo>);
+pub struct PolymodoHandle(Arc<Polymodo>);
 
 impl Deref for PolymodoHandle {
     type Target = Polymodo;
@@ -129,110 +123,5 @@ impl PolymodoHandle {
         })?;
 
         Ok(key)
-    }
-}
-
-pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
-    // set up the polymodo daemon socket for clients to connect to
-    let ipc_server = crate::ipc::create_ipc_server()?; // TODO: try? here is probably not good
-
-    setup_slint_backend();
-
-    let poly = Polymodo::new().into_handle();
-
-    let _task = smol::spawn(accept_clients(poly.clone(), ipc_server));
-
-    let key = poly.spawn_app::<Launcher>()?;
-
-    log::info!("spawned launcher with key {key}");
-
-    slint::run_event_loop_until_quit()?;
-
-    unreachable!()
-}
-
-pub fn run_standalone() -> anyhow::Result<()> {
-    setup_slint_backend();
-
-    let poly = Polymodo::new().into_handle();
-
-    poly.spawn_app::<Launcher>().expect("Failed to spawn app");
-
-    slint::run_event_loop_until_quit()?;
-
-    Ok(())
-    // result
-}
-
-fn setup_slint_backend() {
-    BackendSelector::default()
-        .with_winit_window_attributes_hook(|mut attrs| {
-            attrs.platform = Some(Box::new(
-                WindowAttributesWayland::layer_shell()
-                    .with_layer(Layer::Overlay)
-                    .with_keyboard_interactivity(KeyboardInteractivity::OnDemand),
-            ));
-            attrs
-        })
-        .select()
-        .expect("failed to select");
-}
-
-async fn accept_clients(
-    polymodo: PolymodoHandle,
-    ipc_server: IpcServer,
-) {
-    loop {
-        let Ok(client) = ipc_server.accept().await else {
-            continue;
-        };
-
-        log::debug!("accept new connection at {:?}", client.addr());
-
-        let task = smol::spawn(serve_client(polymodo.clone(), client));
-        task.detach(); // detach so it doesn't cancel when we drop `task`
-    }
-}
-
-/// Given an [IpcClient], perform the read loop, serving any requests made by the client.
-async fn serve_client(polymodo: PolymodoHandle, client: IpcS2C) {
-    loop {
-        let message = match client.recv().await {
-            Err(crate::ipc::IpcReceiveError::DecodeError(e)) => {
-                log::error!("could not decode message from client: {e}");
-                log::error!("this is fatal: aborting connection with client.");
-                return;
-            }
-            Err(crate::ipc::IpcReceiveError::IoError(e)) => {
-                log::error!("io error while reading from client: {e}");
-                log::error!("this is fatal: aborting connection with client.");
-                return;
-            }
-            Ok(m) => m,
-        };
-
-        let _ = match message {
-            ServerboundMessage::Ping => client.send(ClientboundMessage::Pong).await,
-            ServerboundMessage::Spawn(AppSpawnOptions { app_name, single }) => {
-                if single
-                    && polymodo.is_app_running(app_name).await {
-                        return;
-                    }
-                
-                let result = polymodo.spawn_app::<Launcher>();
-                let client = client.clone();
-
-                // TODO: polymodo.wait_for_stop(app_key).await
-
-                Ok(())
-            }
-            // this client is about to quit.
-            ServerboundMessage::Goodbye => {
-                log::debug!("closing connection at {:?}", client.addr());
-                let _ = client.shutdown().await;
-
-                return;
-            }
-        };
     }
 }

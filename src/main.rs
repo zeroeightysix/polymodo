@@ -8,6 +8,7 @@ mod persistence;
 mod polymodo;
 mod windowing;
 mod xdg;
+mod server;
 
 pub mod modules {
     slint::include_modules!();
@@ -18,20 +19,14 @@ use crate::ipc::{AppSpawnOptions, ClientboundMessage, IpcC2S, ServerboundMessage
 use crate::windowing::app::AppName;
 use clap::Parser;
 use std::io::ErrorKind;
-use std::sync::OnceLock;
-use std::time::Instant;
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
-
-/// Some starting time.
-///
-/// Relative to whoever asks first.
-pub fn start_time() -> Instant {
-    static LOCK: OnceLock<Instant> = OnceLock::new();
-    *LOCK.get_or_init(Instant::now)
-}
+use slint::BackendSelector;
+use slint::winit_030::winit::platform::wayland::{KeyboardInteractivity, Layer, WindowAttributesWayland};
+use crate::mode::launch::Launcher;
+use crate::polymodo::Polymodo;
 
 fn main() -> anyhow::Result<()> {
     setup_logging()?;
@@ -41,7 +36,7 @@ fn main() -> anyhow::Result<()> {
     if args.standalone {
         log::info!("Starting standalone polymodo");
 
-        polymodo::run_standalone();
+        run_standalone()?;
 
         std::process::exit(0);
     }
@@ -51,7 +46,7 @@ fn main() -> anyhow::Result<()> {
         Ok(client) => {
             // ok, we have a client, let's talk with the server!
             // the client is written in async code, so set up a runtime here.
-            let _ = smol::block_on(run_polymodo_client(args, client));
+            let _ = smol::block_on(run_client(args, client));
 
             todo!()
         }
@@ -61,7 +56,7 @@ fn main() -> anyhow::Result<()> {
             // let's become that!
             log::info!("Starting polymodo daemon");
 
-            polymodo::run_server()?;
+            server::run_server()?;
 
             unreachable!();
         }
@@ -76,7 +71,7 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-async fn run_polymodo_client(args: Args, client: IpcC2S) -> anyhow::Result<Option<String>> {
+async fn run_client(args: Args, client: IpcC2S) -> anyhow::Result<Option<String>> {
     client
         .send(ServerboundMessage::Spawn(AppSpawnOptions {
             app_name: AppName::Launcher,
@@ -99,6 +94,19 @@ async fn run_polymodo_client(args: Args, client: IpcC2S) -> anyhow::Result<Optio
     })
 }
 
+pub fn run_standalone() -> anyhow::Result<()> {
+    setup_slint_backend();
+
+    let poly = Polymodo::new().into_handle();
+
+    poly.spawn_app::<Launcher>().expect("Failed to spawn app");
+
+    slint::run_event_loop_until_quit()?;
+
+    Ok(())
+    // result
+}
+
 fn setup_logging() -> anyhow::Result<()> {
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::WARN.into())
@@ -111,4 +119,18 @@ fn setup_logging() -> anyhow::Result<()> {
 
     log_panics::init();
     Ok(())
+}
+
+pub fn setup_slint_backend() {
+    BackendSelector::default()
+        .with_winit_window_attributes_hook(|mut attrs| {
+            attrs.platform = Some(Box::new(
+                WindowAttributesWayland::layer_shell()
+                    .with_layer(Layer::Overlay)
+                    .with_keyboard_interactivity(KeyboardInteractivity::OnDemand),
+            ));
+            attrs
+        })
+        .select()
+        .expect("failed to select");
 }
