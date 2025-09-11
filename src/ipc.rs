@@ -8,6 +8,7 @@ use std::rc::Rc;
 use smol::Async;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use smol::lock::Mutex;
+use crate::windowing::app::AppName;
 
 const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
@@ -17,15 +18,14 @@ pub type IpcS2C = IpcClient<ServerboundMessage, ClientboundMessage>;
 #[derive(Debug, Decode, Encode)]
 pub enum ServerboundMessage {
     Ping,
-    /// Is an app with this type already running?
-    IsRunning(String),
-    Spawn(AppDescription),
+    Spawn(AppSpawnOptions),
     Goodbye,
 }
 
 #[derive(Debug, Decode, Encode)]
-pub enum AppDescription {
-    Launcher,
+pub struct AppSpawnOptions {
+    pub app_name: AppName,
+    pub single: bool,
 }
 
 #[derive(Debug, Decode, Encode)]
@@ -88,7 +88,7 @@ where
         loop {
             let mut buffer = self.buffer.lock().await;
 
-            match bincode::decode_from_slice(&**buffer, BINCODE_CONFIG) {
+            match bincode::decode_from_slice(&buffer, BINCODE_CONFIG) {
                 Ok((message, bytes)) => {
                     // remove `bytes` bytes from our buffer
                     // as we might have already read bytes of the next message, it's essential that
@@ -103,7 +103,7 @@ where
 
             let mut stream = self.stream.clone();
 
-            if stream.read(&mut **buffer).await? == 0 {
+            if stream.read(&mut buffer).await? == 0 {
                 let err: std::io::Error = std::io::ErrorKind::BrokenPipe.into();
                 return Err(err.into());
             }
@@ -131,7 +131,7 @@ impl IpcServer {
         &self,
     ) -> std::io::Result<IpcClient<ServerboundMessage, ClientboundMessage>> {
         let (stream, addr) = self.listener.accept().await?;
-        let client = IpcClient::new(stream, addr.into());
+        let client = IpcClient::new(stream, addr);
 
         Ok(client)
     }
@@ -144,15 +144,15 @@ pub fn get_polymodo_socket_addr() -> SocketAddr {
         .expect("can't construct polymodo socket address. Is abstract namespacing not supported on the version of linux you are running?")
 }
 
-pub async fn create_ipc_server() -> std::io::Result<IpcServer> {
-    let listener = create_listener().await?;
+pub fn create_ipc_server() -> std::io::Result<IpcServer> {
+    let listener = create_listener()?;
 
     let server = IpcServer { listener };
 
     Ok(server)
 }
 
-async fn create_listener() -> std::io::Result<UnixListener> {
+fn create_listener() -> std::io::Result<UnixListener> {
     let addr = get_polymodo_socket_addr();
     let listener = bind_listener(addr)?;
 

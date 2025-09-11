@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use bincode::{Decode, Encode};
 
 pub type AppKey = u32;
 
@@ -9,6 +10,8 @@ pub fn new_app_key() -> AppKey {
 pub trait App: Sized + Send {
     type Message;
     type Output;
+
+    const NAME: AppName;
 
     fn create(message_sender: AppSender<Self::Message>) -> Self;
 
@@ -25,9 +28,10 @@ pub trait App: Sized + Send {
 /// This serves to provide a dyn compatible trait for `AppSurfaceDriver` to use, as `App` itself
 /// has GATs that make it dyn incompatible.
 pub trait AppDriver: Send {
+    // TODO: can we get rid of this?
     fn key(&self) -> AppKey;
 
-    fn app_type(&self) -> &'static str;
+    fn app_name(&self) -> AppName;
 
     fn on_message(&mut self, message: Box<dyn std::any::Any>);
 
@@ -63,8 +67,8 @@ where
         self.key
     }
 
-    fn app_type(&self) -> &'static str {
-        std::any::type_name::<A>()
+    fn app_name(&self) -> AppName {
+        A::NAME
     }
 
     fn on_message(&mut self, message: Box<dyn std::any::Any>) {
@@ -127,4 +131,9 @@ where
 pub struct AppMessage {
     pub app_key: AppKey,
     pub message: Box<dyn std::any::Any + Send>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Decode, Encode)]
+pub enum AppName {
+    Launcher,
 }

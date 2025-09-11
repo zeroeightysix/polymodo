@@ -3,19 +3,19 @@ mod config;
 mod fuzzy_search;
 mod ipc;
 mod mode;
+mod notify;
 mod persistence;
 mod polymodo;
 mod windowing;
 mod xdg;
-mod notify;
 
 pub mod modules {
     slint::include_modules!();
 }
 
 use crate::cli::Args;
-use crate::ipc::{AppDescription, ClientboundMessage, IpcC2S, ServerboundMessage};
-use crate::mode::launch::Launcher;
+use crate::ipc::{AppSpawnOptions, ClientboundMessage, IpcC2S, ServerboundMessage};
+use crate::windowing::app::AppName;
 use clap::Parser;
 use std::io::ErrorKind;
 use std::sync::OnceLock;
@@ -77,31 +77,11 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn run_polymodo_client(args: Args, client: IpcC2S) -> anyhow::Result<Option<String>> {
-    // did we request a single app instance?
-    if args.single {
-        client
-            .send(ServerboundMessage::IsRunning(
-                std::any::type_name::<Launcher>().to_string(),
-            ))
-            .await
-            .expect("failed to send");
-        let message = client.recv().await.expect("failed to recv");
-
-        match message {
-            ClientboundMessage::Running(name, false)
-                if name == std::any::type_name::<Launcher>() =>
-            {
-                // ok!
-            }
-            _ => {
-                println!("App already running!");
-                return Ok(None);
-            }
-        }
-    }
-
     client
-        .send(ServerboundMessage::Spawn(AppDescription::Launcher))
+        .send(ServerboundMessage::Spawn(AppSpawnOptions {
+            app_name: AppName::Launcher,
+            single: args.single,
+        }))
         .await
         .expect("failed to send");
 

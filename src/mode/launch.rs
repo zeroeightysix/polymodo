@@ -1,5 +1,5 @@
 use crate::fuzzy_search::{FuzzySearch, Row};
-use crate::windowing::app::{App, AppSender};
+use crate::windowing::app::{App, AppName, AppSender};
 use crate::xdg::find_desktop_entries;
 use anyhow::anyhow;
 use icon::Icons;
@@ -82,7 +82,7 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
 
                 // try locating the icon for this desktop entry, if any, and which may have to be deferred:
                 let worker = icon_worker.get_or_insert_with(|| {
-                    let (sender, mut receiver) = smol::channel::unbounded();
+                    let (sender, receiver) = smol::channel::unbounded();
                     let task = smol::unblock(move || -> Option<()> {
                         loop {
                             let entry = receiver.recv_blocking().ok()?;
@@ -161,6 +161,8 @@ struct LauncherEntry {
 impl App for Launcher {
     type Message = Message;
     type Output = anyhow::Result<()>;
+    
+    const NAME: AppName = AppName::Launcher;
 
     fn create(message_sender: AppSender<Self::Message>) -> Self {
         // read the bias from persistent state, if any.
@@ -187,7 +189,7 @@ impl App for Launcher {
             loop {
                 notify.acquire().await;
 
-                let _ = message_sender.send(Message::Search);
+                message_sender.send(Message::Search);
             }
         });
 

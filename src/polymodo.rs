@@ -1,12 +1,14 @@
-use crate::ipc::{AppDescription, ClientboundMessage, IpcS2C, IpcServer, ServerboundMessage};
+use crate::ipc::{AppSpawnOptions, ClientboundMessage, IpcS2C, ServerboundMessage};
 use crate::mode::launch::Launcher;
 use crate::windowing::app;
 use crate::windowing::app::{AppMessage, AppSender};
+use slint::winit_030::winit::platform::wayland::{
+    KeyboardInteractivity, Layer, WindowAttributesWayland,
+};
+use slint::BackendSelector;
 use std::collections::HashMap;
 use std::ops::Deref;
-use std::sync::{Arc, Mutex};
-use slint::BackendSelector;
-use slint::winit_030::winit::platform::wayland::{KeyboardInteractivity, Layer, WindowAttributesWayland};
+use std::sync::Arc;
 
 struct Polymodo {
     apps: smol::lock::Mutex<HashMap<app::AppKey, Box<dyn app::AppDriver>>>,
@@ -34,9 +36,8 @@ impl Polymodo {
 
     pub fn app_sender<M: Send + 'static>(&self, app_key: app::AppKey) -> AppSender<M> {
         let sender = self.app_message_channel.0.clone();
-        let app_sender = AppSender::new(app_key, sender);
 
-        app_sender
+        AppSender::new(app_key, sender)
     }
 
     /// Request an app to stop. Returns its output value, boxed as any.
@@ -76,6 +77,12 @@ impl Polymodo {
         app.on_message(message);
 
         drop(apps); // explicitly release the lock, in case we ever add code below here ;)
+    }
+    
+    /// Is an app with this `app_name` running?
+    async fn is_app_running(&self, app_name: app::AppName) -> bool {
+        let apps = self.apps.lock().await;
+        apps.values().any(|x| x.app_name() == app_name)
     }
 
     pub fn into_handle(self) -> PolymodoHandle {
@@ -127,8 +134,7 @@ impl PolymodoHandle {
 
 pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
     // set up the polymodo daemon socket for clients to connect to
-    // TODO
-    // let ipc_server = crate::ipc::create_ipc_server().await?; // TODO: try? here is probably not good
+    let ipc_server = crate::ipc::create_ipc_server()?; // TODO: try? here is probably not good
 
     let poly = Polymodo::new().into_handle();
 
@@ -157,8 +163,7 @@ pub fn run_standalone() -> anyhow::Result<()> {
 
     let poly = Polymodo::new().into_handle();
 
-    poly.spawn_app::<Launcher>()
-        .expect("Failed to spawn app");
+    poly.spawn_app::<Launcher>().expect("Failed to spawn app");
 
     slint::run_event_loop_until_quit()?;
 
@@ -208,26 +213,12 @@ async fn serve_client(polymodo: PolymodoHandle, client: IpcS2C) {
 
         let _ = match message {
             ServerboundMessage::Ping => client.send(ClientboundMessage::Pong).await,
-            ServerboundMessage::IsRunning(type_id) => {
-                todo!()
-                // let (tx, rx) = tokio::sync::oneshot::channel();
-                // polymodo.send_app_event(AppEvent::AppExistsQuery {
-                //     app_type_id: type_id.clone(),
-                //     response: tx,
-                // });
-                //
-                // let running = rx.await.expect("sender half closed");
-                //
-                // if let Err(e) = client
-                //     .send(ClientboundMessage::Running(type_id, running))
-                //     .await
-                // {
-                //     log::error!("failed to reply to client: {e}");
-                // }
-                //
-                // Ok(())
-            }
-            ServerboundMessage::Spawn(AppDescription::Launcher) => {
+            ServerboundMessage::Spawn(AppSpawnOptions { app_name, single }) => {
+                if single
+                    && polymodo.is_app_running(app_name).await {
+                        return;
+                    }
+                
                 let result = polymodo.spawn_app::<Launcher>();
                 let client = client.clone();
 
