@@ -185,13 +185,17 @@ impl App for Launcher {
 
         let notify = search.notify();
 
-        let task = smol::spawn(async move {
-            loop {
-                notify.acquire().await;
+        let task = {
+            let message_sender = message_sender.clone();
 
-                message_sender.send(Message::Search);
-            }
-        });
+            smol::spawn(async move {
+                loop {
+                    notify.acquire().await;
+
+                    message_sender.send(Message::Search);
+                }
+            })
+        };
 
         let main_window: MainWindow = MainWindow::new().expect("dkjfl;sdjfs");
 
@@ -205,7 +209,12 @@ impl App for Launcher {
         let model_rc: ModelRc<_> = model.clone().into();
 
         main_window.set_texts(model_rc.clone());
-        main_window.on_btn_clicked(move || model.push(TestModelItem { name: "Bar".into() }));
+        {
+            let message_sender = message_sender.clone();
+            main_window.on_btn_clicked(move || {
+                message_sender.finish();
+            });
+        }
         main_window.show();
 
         Launcher {

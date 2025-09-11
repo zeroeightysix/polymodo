@@ -57,15 +57,14 @@ async fn serve_client(polymodo: PolymodoHandle, client: IpcS2C) {
         let _ = match message {
             ServerboundMessage::Ping => client.send(ClientboundMessage::Pong).await,
             ServerboundMessage::Spawn(AppSpawnOptions { app_name, single }) => {
-                if single
-                    && polymodo.is_app_running(app_name).await {
-                        return;
-                    }
-                
-                let result = polymodo.spawn_app::<Launcher>();
-                let client = client.clone();
+                if single && polymodo.is_app_running(app_name).await {
+                    return;
+                }
 
-                // TODO: polymodo.wait_for_stop(app_key).await
+                let app_key = polymodo.spawn_app::<Launcher>().expect("failed to spawn app");
+                let app_result = polymodo.wait_for_app_stop(app_key).await.expect("sender closed");
+
+                // TODO: what to do with this result?
 
                 Ok(())
             }

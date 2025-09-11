@@ -1,44 +1,57 @@
+use std::any::Any;
 use crate::app;
-use crate::app::{AppMessage, AppSender};
+use crate::app::{AppEvent, AppMessage, AppSender};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
+use smol::Task;
 
 pub struct Polymodo {
     apps: smol::lock::Mutex<HashMap<app::AppKey, Box<dyn app::AppDriver>>>,
+    app_finish_senders: smol::lock::Mutex<HashMap<app::AppKey, oneshot::Sender<Option<Box<dyn Any + Send>>>>>,
     app_message_channel: (
-        smol::channel::Sender<AppMessage>,
-        smol::channel::Receiver<AppMessage>,
+        smol::channel::Sender<AppEvent>,
+        smol::channel::Receiver<AppEvent>,
     ),
-}
-
-#[derive(Debug, derive_more::Error, derive_more::Display, derive_more::From)]
-enum PolymodoError {
-    #[display("no app with app key {_0} exists")]
-    NoSuchApp(#[error(not(source))] app::AppKey),
 }
 
 impl Polymodo {
     pub fn new() -> Self {
-        let channel = smol::channel::unbounded::<AppMessage>();
+        let channel = smol::channel::unbounded::<AppEvent>();
 
         Self {
             apps: Default::default(),
+            app_finish_senders: Default::default(),
             app_message_channel: channel,
         }
     }
 
-    pub fn app_sender<M: Send + 'static>(&self, app_key: app::AppKey) -> AppSender<M> {
-        let sender = self.app_message_channel.0.clone();
+    pub async fn wait_for_app_stop(&self, app_key: app::AppKey) -> anyhow::Result<Option<Box<dyn Any + Send>>> {
+        // set up the channel of a "finish sender" stored in Polymodo:
+        let (sender, receiver) = oneshot::channel();
 
-        AppSender::new(app_key, sender)
+        // the sender bit we'll put into polymodo for it to find when an app finishes:
+        {
+            let mut senders = self.app_finish_senders.lock().await;
+
+            if let Some(previous_sender) = senders.insert(app_key, sender) {
+                // oops. we're overwriting a sender that came before us!
+                // send it a None, to notify it that it may stop listening:
+                let _ = previous_sender.send(None);
+            }
+
+            drop(senders);
+        }
+
+        // and now, we wait:
+        Ok(receiver.await?)
     }
 
-    /// Request an app to stop. Returns its output value, boxed as any.
-    pub async fn stop_app(
+    /// Stop an app. Returns its output value, boxed as any.
+    async fn stop_app(
         &self,
         app: app::AppKey,
-    ) -> Result<Box<dyn std::any::Any>, PolymodoError> {
+    ) -> Result<Box<dyn Any + Send>, PolymodoError> {
         let mut app = self
             .apps
             .lock()
@@ -52,27 +65,55 @@ impl Polymodo {
     /// Receive one message from the messages channel (potentially waiting if there are none) and
     /// forward it to the app it came from.
     async fn handle_app_message(&self) {
-        let Ok(AppMessage { app_key, message }) = self.app_message_channel.1.recv().await else {
+        let Ok(AppEvent { app_key, message }) = self.app_message_channel.1.recv().await else {
             // `recv` only returns an error if the channel is closed (impossible: `app_message_channel` holds a sender),
             // or full (impossible: we make an unbounded channel!),
             // thus this should really never happen.
             unreachable!();
         };
 
-        // handling messages requires mutable access to the app,
-        // so we lock apps here.
-        let mut apps = self.apps.lock().await;
-        let Some(app) = apps.get_mut(&app_key) else {
-            // might happen if an app sends a message, but is stopped before that message ever gets processed.
-            log::warn!("failed to send message to app, because app does not exist.");
-            return;
-        };
+        match message {
+            AppMessage::Finished => {
+                let Ok(result) = self.stop_app(app_key).await else {
+                    log::error!("got a Finished message for an app that doesn't exist");
+                    return;
+                };
 
-        app.on_message(message);
+                // check if anyone's listening for this app's result:
+                let mut senders = self.app_finish_senders.lock().await;
+                if let Some(sender) = senders.remove(&app_key) {
+                    if let Err(_) = sender.send(Some(result)) {
+                        log::warn!("could not deliver app result because the receiver has been dropped");
+                    }
+                } else {
+                    // no one's listening. do we want to log the result somehow?
+                    log::warn!("app finished, but no listener was registered for its result");
 
-        drop(apps); // explicitly release the lock, in case we ever add code below here ;)
+                }
+            }
+            AppMessage::Message(message) => {
+                // handling messages requires mutable access to the app,
+                // so we lock apps here.
+                let mut apps = self.apps.lock().await;
+                let Some(app) = apps.get_mut(&app_key) else {
+                    // might happen if an app sends a message, but is stopped before that message ever gets processed.
+                    log::warn!("failed to send message to app, because app does not exist.");
+                    return;
+                };
+
+                app.on_message(message);
+
+                drop(apps); // explicitly release the lock, in case we ever add code below here ;)
+            }
+        }
     }
-    
+
+    pub fn app_sender<M: Send + 'static>(&self, app_key: app::AppKey) -> AppSender<M> {
+        let sender = self.app_message_channel.0.clone();
+
+        AppSender::new(app_key, sender)
+    }
+
     /// Is an app with this `app_name` running?
     pub async fn is_app_running(&self, app_name: app::AppName) -> bool {
         let apps = self.apps.lock().await;
@@ -82,6 +123,12 @@ impl Polymodo {
     pub fn into_handle(self) -> PolymodoHandle {
         PolymodoHandle(Arc::new(self))
     }
+}
+
+#[derive(Debug, derive_more::Error, derive_more::Display, derive_more::From)]
+pub enum PolymodoError {
+    #[display("no app with app key {_0} exists")]
+    NoSuchApp(#[error(not(source))] app::AppKey),
 }
 
 #[derive(Clone)]
@@ -104,6 +151,7 @@ impl PolymodoHandle {
     where
         A: app::App + 'static,
         A::Message: Send + 'static,
+        A::Output: Send
     {
         // create a new key for this app.
         // (it's just a number)
@@ -123,5 +171,14 @@ impl PolymodoHandle {
         })?;
 
         Ok(key)
+    }
+
+    pub fn start_running(&self) -> Task<std::convert::Infallible> {
+        let poly = self.clone();
+        smol::spawn(async move {
+            loop {
+                poly.handle_app_message().await;
+            }
+        })
     }
 }

@@ -71,6 +71,9 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
+/// Run polymodo as a client interacting with the incumbent polymodo daemon.
+///
+/// This, more or less, just sets up IPC, spawns the desired app, and waits for its result.
 async fn run_client(args: Args, client: IpcC2S) -> anyhow::Result<Option<String>> {
     client
         .send(ServerboundMessage::Spawn(AppSpawnOptions {
@@ -94,17 +97,32 @@ async fn run_client(args: Args, client: IpcC2S) -> anyhow::Result<Option<String>
     })
 }
 
+/// Run polymodo without connecting to a server and without setting up IPC.
+///
+/// This function returns when the spawned app dies.
 pub fn run_standalone() -> anyhow::Result<()> {
     setup_slint_backend();
 
     let poly = Polymodo::new().into_handle();
 
-    poly.spawn_app::<Launcher>().expect("Failed to spawn app");
+    let task = smol::spawn(async move {
+        poly.start_running().detach();
+        let app = poly.spawn_app::<Launcher>().expect("Failed to spawn app");
+        let result = poly.wait_for_app_stop(app).await;
 
-    slint::run_event_loop_until_quit()?;
+        slint::quit_event_loop().expect("failed to quit");
+
+        result
+    });
+
+    slint::run_event_loop_until_quit().expect("slint failed");
+
+    let result = smol::block_on(task)?;
+
+    // what do
+    println!("{:?}", result);
 
     Ok(())
-    // result
 }
 
 fn setup_logging() -> anyhow::Result<()> {

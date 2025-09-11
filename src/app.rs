@@ -40,7 +40,7 @@ pub trait AppDriver: Send {
     /// accepting `self` (instead of a reference) cannot be called.
     ///
     /// Panics if called twice.
-    fn stop(&mut self) -> Box<dyn std::any::Any>;
+    fn stop(&mut self) -> Box<dyn std::any::Any + Send>;
 }
 
 struct AppDriverImpl<A> {
@@ -61,7 +61,7 @@ impl<A: App> AppDriver for AppDriverImpl<A>
 where
     A: 'static,
     A::Message: 'static,
-    A::Output: 'static,
+    A::Output: 'static + Send,
 {
     fn key(&self) -> AppKey {
         self.key
@@ -82,7 +82,7 @@ where
             .on_message(*message);
     }
 
-    fn stop(&mut self) -> Box<dyn std::any::Any> {
+    fn stop(&mut self) -> Box<dyn std::any::Any + Send> {
         let app = self.app.take().expect("app has been already been stopped");
 
         Box::new(app.stop())
@@ -93,14 +93,15 @@ pub fn driver_for<A>(key: AppKey, app: A) -> impl AppDriver
 where
     A: App + 'static,
     A::Message: 'static,
-    A::Output: 'static,
+    A::Output: 'static + Send,
 {
     AppDriverImpl::new(key, app)
 }
 
 /// The sender end of a channel for apps to send messages to themselves.
+#[derive(Clone)]
 pub struct AppSender<M> {
-    sender: smol::channel::Sender<AppMessage>,
+    sender: smol::channel::Sender<AppEvent>,
     app_key: AppKey,
     data: PhantomData<M>,
 }
@@ -109,7 +110,7 @@ impl<M> AppSender<M>
 where
     M: Send + 'static,
 {
-    pub fn new(app_key: AppKey, sender: smol::channel::Sender<AppMessage>) -> AppSender<M> {
+    pub fn new(app_key: AppKey, sender: smol::channel::Sender<AppEvent>) -> AppSender<M> {
         Self {
             sender,
             app_key,
@@ -119,18 +120,33 @@ where
 
     /// Send a message to the App, which will be received by its [App::on_message] method.
     pub fn send(&self, message: M) {
-        if let Err(_) = self.sender.try_send(AppMessage {
+        if let Err(_) = self.sender.try_send(AppEvent {
             app_key: self.app_key,
-            message: Box::new(message),
+            message: AppMessage::Message(Box::new(message)),
         }) {
             log::error!("tried sending message to app, but the message receiver has been dropped: is polymodo dead?");
         }
     }
+
+    pub fn finish(&self) {
+        self.sender.try_send(AppEvent {
+            app_key: self.app_key,
+            message: AppMessage::Finished,
+        })
+            .expect("could not send message to polymodo");
+    }
 }
 
-pub struct AppMessage {
+pub struct AppEvent {
     pub app_key: AppKey,
-    pub message: Box<dyn std::any::Any + Send>,
+    pub message: AppMessage,
+}
+
+pub enum AppMessage {
+    /// App requests to be stopped
+    Finished,
+    /// Message to app
+    Message(Box<dyn std::any::Any + Send>),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Decode, Encode)]
