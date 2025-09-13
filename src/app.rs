@@ -7,7 +7,7 @@ pub fn new_app_key() -> AppKey {
     rand::random()
 }
 
-pub trait App: Sized + Send {
+pub trait App: Sized {
     type Message;
     type Output;
 
@@ -27,7 +27,7 @@ pub trait App: Sized + Send {
 ///
 /// This serves to provide a dyn compatible trait for `AppSurfaceDriver` to use, as `App` itself
 /// has GATs that make it dyn incompatible.
-pub trait AppDriver: Send {
+pub trait AppDriver {
     // TODO: can we get rid of this?
     fn key(&self) -> AppKey;
 

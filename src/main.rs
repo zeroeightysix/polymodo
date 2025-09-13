@@ -103,24 +103,21 @@ async fn run_client(args: Args, client: IpcC2S) -> anyhow::Result<Option<String>
 pub fn run_standalone() -> anyhow::Result<()> {
     setup_slint_backend();
 
-    let poly = Polymodo::new().into_handle();
-
-    let task = smol::spawn(async move {
-        poly.start_running().detach();
+    slint::invoke_from_event_loop(|| {
+        let poly = Polymodo::new().into_handle();
+        let _run_task = poly.start_running();
         let app = poly.spawn_app::<Launcher>().expect("Failed to spawn app");
-        let result = poly.wait_for_app_stop(app).await;
 
-        slint::quit_event_loop().expect("failed to quit");
+        slint::spawn_local(async move {
+            let result = poly.wait_for_app_stop(app);
 
-        result
-    });
+            let result1 = result.await;
+
+            slint::quit_event_loop().expect("failed to quit");
+        }).expect("an event loop");
+    }).expect("an event loop");
 
     slint::run_event_loop_until_quit().expect("slint failed");
-
-    let result = smol::block_on(task)?;
-
-    // what do
-    println!("{:?}", result);
 
     Ok(())
 }

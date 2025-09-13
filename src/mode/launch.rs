@@ -13,6 +13,7 @@ use std::rc::Rc;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Instant;
 use slint::{ComponentHandle, ModelRc, VecModel};
+use crate::mode::{HideOnDrop, HideOnDropExt};
 use crate::modules::{MainWindow, TestModelItem};
 
 static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
@@ -147,6 +148,7 @@ pub struct Launcher {
     results: Vec<SearchRow>,
     bias: LauncherEntryBiasState,
     search_task: smol::Task<std::convert::Infallible>,
+    main_window: HideOnDrop<MainWindow>,
 }
 
 #[derive(Debug, Clone)]
@@ -197,7 +199,7 @@ impl App for Launcher {
             })
         };
 
-        let main_window: MainWindow = MainWindow::new().expect("dkjfl;sdjfs");
+        let main_window: HideOnDrop<MainWindow> = MainWindow::new().expect("dkjfl;sdjfs").hide_on_drop();
 
         let model = vec![
             TestModelItem { name: "Foo".into() },
@@ -219,6 +221,7 @@ impl App for Launcher {
 
         Launcher {
             // desktop_entries,
+            main_window,
             search,
             results: entries,
             bias,

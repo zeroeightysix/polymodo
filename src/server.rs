@@ -3,18 +3,20 @@ use crate::mode::launch::Launcher;
 use crate::polymodo::{Polymodo, PolymodoHandle};
 
 pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
+    crate::setup_slint_backend();
+
     // set up the polymodo daemon socket for clients to connect to
     let ipc_server = crate::ipc::create_ipc_server()?; // TODO: try? here is probably not good
 
-    crate::setup_slint_backend();
+    slint::invoke_from_event_loop(|| {
+        let poly = Polymodo::new().into_handle();
+        let _run_task = poly.start_running();
 
-    let poly = Polymodo::new().into_handle();
-    let _run_task = poly.start_running();
-    let _server_task = smol::spawn(accept_clients(poly.clone(), ipc_server));
+        let _server_task = slint::spawn_local(accept_clients(poly.clone(), ipc_server));
 
-    let key = poly.spawn_app::<Launcher>()?;
-
-    log::info!("spawned launcher with key {key}");
+        let key = poly.spawn_app::<Launcher>().expect("failed to spawn app");
+        log::info!("spawned launcher with key {key}");
+    }).expect("an event loop");
 
     slint::run_event_loop_until_quit()?;
 
@@ -32,8 +34,8 @@ pub async fn accept_clients(
 
         log::debug!("accept new connection at {:?}", client.addr());
 
-        let task = smol::spawn(serve_client(polymodo.clone(), client));
-        task.detach(); // detach so it doesn't cancel when we drop `task`
+        let _ = slint::spawn_local(serve_client(polymodo.clone(), client))
+            .expect("an event loop");
     }
 }
 

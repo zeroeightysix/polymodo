@@ -1,14 +1,16 @@
-use std::any::Any;
 use crate::app;
 use crate::app::{AppEvent, AppMessage, AppSender};
+use slint::JoinHandle;
+use std::any::Any;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Deref;
+use std::rc::Rc;
 use std::sync::Arc;
-use smol::Task;
 
 pub struct Polymodo {
-    apps: smol::lock::Mutex<HashMap<app::AppKey, Box<dyn app::AppDriver>>>,
-    app_finish_senders: smol::lock::Mutex<HashMap<app::AppKey, oneshot::Sender<Option<Box<dyn Any + Send>>>>>,
+    apps: RefCell<HashMap<app::AppKey, Box<dyn app::AppDriver>>>,
+    app_finish_senders: RefCell<HashMap<app::AppKey, oneshot::Sender<Option<Box<dyn Any + Send>>>>>,
     app_message_channel: (
         smol::channel::Sender<AppEvent>,
         smol::channel::Receiver<AppEvent>,
@@ -26,13 +28,16 @@ impl Polymodo {
         }
     }
 
-    pub async fn wait_for_app_stop(&self, app_key: app::AppKey) -> anyhow::Result<Option<Box<dyn Any + Send>>> {
+    pub async fn wait_for_app_stop(
+        &self,
+        app_key: app::AppKey,
+    ) -> anyhow::Result<Option<Box<dyn Any + Send>>> {
         // set up the channel of a "finish sender" stored in Polymodo:
         let (sender, receiver) = oneshot::channel();
 
         // the sender bit we'll put into polymodo for it to find when an app finishes:
         {
-            let mut senders = self.app_finish_senders.lock().await;
+            let mut senders = self.app_finish_senders.borrow_mut();
 
             if let Some(previous_sender) = senders.insert(app_key, sender) {
                 // oops. we're overwriting a sender that came before us!
@@ -48,14 +53,10 @@ impl Polymodo {
     }
 
     /// Stop an app. Returns its output value, boxed as any.
-    async fn stop_app(
-        &self,
-        app: app::AppKey,
-    ) -> Result<Box<dyn Any + Send>, PolymodoError> {
+    async fn stop_app(&self, app: app::AppKey) -> Result<Box<dyn Any + Send>, PolymodoError> {
         let mut app = self
             .apps
-            .lock()
-            .await
+            .borrow_mut()
             .remove(&app)
             .ok_or(PolymodoError::NoSuchApp(app))?;
 
@@ -80,21 +81,22 @@ impl Polymodo {
                 };
 
                 // check if anyone's listening for this app's result:
-                let mut senders = self.app_finish_senders.lock().await;
+                let mut senders = self.app_finish_senders.borrow_mut();
                 if let Some(sender) = senders.remove(&app_key) {
                     if let Err(_) = sender.send(Some(result)) {
-                        log::warn!("could not deliver app result because the receiver has been dropped");
+                        log::warn!(
+                            "could not deliver app result because the receiver has been dropped"
+                        );
                     }
                 } else {
                     // no one's listening. do we want to log the result somehow?
                     log::warn!("app finished, but no listener was registered for its result");
-
                 }
             }
             AppMessage::Message(message) => {
                 // handling messages requires mutable access to the app,
                 // so we lock apps here.
-                let mut apps = self.apps.lock().await;
+                let mut apps = self.apps.borrow_mut();
                 let Some(app) = apps.get_mut(&app_key) else {
                     // might happen if an app sends a message, but is stopped before that message ever gets processed.
                     log::warn!("failed to send message to app, because app does not exist.");
@@ -116,12 +118,12 @@ impl Polymodo {
 
     /// Is an app with this `app_name` running?
     pub async fn is_app_running(&self, app_name: app::AppName) -> bool {
-        let apps = self.apps.lock().await;
+        let apps = self.apps.borrow_mut();
         apps.values().any(|x| x.app_name() == app_name)
     }
 
     pub fn into_handle(self) -> PolymodoHandle {
-        PolymodoHandle(Arc::new(self))
+        PolymodoHandle(Rc::new(self))
     }
 }
 
@@ -132,7 +134,7 @@ pub enum PolymodoError {
 }
 
 #[derive(Clone)]
-pub struct PolymodoHandle(Arc<Polymodo>);
+pub struct PolymodoHandle(Rc<Polymodo>);
 
 impl Deref for PolymodoHandle {
     type Target = Polymodo;
@@ -143,7 +145,8 @@ impl Deref for PolymodoHandle {
 }
 
 impl PolymodoHandle {
-    /// Create a new instance of an [app::App] and run it on the slint event loop.
+    /// Create a new instance of an [app::App] and run it. This must be called from the same
+    /// thread as the slint event loop — otherwise apps may fail to create their UI components.
     /// Returns the associated app key.
     ///
     /// This method only exists on `PolymodoHandle`, as a new handle is created to pass onto the event loop.
@@ -151,7 +154,7 @@ impl PolymodoHandle {
     where
         A: app::App + 'static,
         A::Message: Send + 'static,
-        A::Output: Send
+        A::Output: Send,
     {
         // create a new key for this app.
         // (it's just a number)
@@ -159,26 +162,26 @@ impl PolymodoHandle {
         let app_sender = self.app_sender(key);
         let handle = self.clone();
 
-        slint::invoke_from_event_loop(move || {
-            // Create the app and its driver (wrapper)
-            let app = A::create(app_sender);
-            let driver = app::driver_for(key, app);
+        // Create the app and its driver (wrapper)
+        let app = A::create(app_sender);
+        let driver = app::driver_for(key, app);
 
-            // Add it to the list
-            let mut apps = handle.apps.lock_blocking();
-            apps.insert(key, Box::new(driver));
-            drop(apps);
-        })?;
+        // Add it to the list
+        let mut apps = handle.apps.borrow_mut();
+        apps.insert(key, Box::new(driver));
+        drop(apps);
 
         Ok(key)
     }
 
-    pub fn start_running(&self) -> Task<std::convert::Infallible> {
+    pub fn start_running(&self) -> JoinHandle<std::convert::Infallible> {
         let poly = self.clone();
-        smol::spawn(async move {
+
+        slint::spawn_local(async move {
             loop {
                 poly.handle_app_message().await;
             }
         })
+        .expect("an event loop")
     }
 }
