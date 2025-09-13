@@ -9,8 +9,8 @@ pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
     crate::setup_slint_backend();
 
     let poly = Polymodo::new().into_handle();
-
-    let _task = smol::spawn(accept_clients(poly.clone(), ipc_server));
+    let _run_task = poly.start_running();
+    let _server_task = smol::spawn(accept_clients(poly.clone(), ipc_server));
 
     let key = poly.spawn_app::<Launcher>()?;
 
