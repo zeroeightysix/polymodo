@@ -29,8 +29,9 @@ impl Notify {
     }
 
     /// Wait for a notification. This method returns a future.
-    pub fn acquire(&self) -> AcquireArc {
-        self.inner.acquire_arc()
+    pub async fn acquire(&self) {
+        let semaphore_guard = self.inner.acquire_arc().await;
+        semaphore_guard.forget(); // Prevents the permit from returning
     }
 
     pub fn acquire_blocking(&self) -> SemaphoreGuard<'_> {
