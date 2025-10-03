@@ -1,9 +1,12 @@
-use crate::fuzzy_search::{FuzzySearch, Row};
 use crate::app::{App, AppName, AppSender};
+use crate::fuzzy_search::{FuzzySearch, Row};
+use crate::mode::{HideOnDrop, HideOnDropExt};
+use crate::ui;
 use crate::xdg::find_desktop_entries;
 use anyhow::anyhow;
 use icon::Icons;
 use nucleo::Utf32String;
+use slint::{ComponentHandle, ModelRc, Rgba8Pixel, VecModel};
 use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
@@ -12,9 +15,6 @@ use std::process::Command;
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Instant;
-use slint::{ComponentHandle, ModelRc, VecModel};
-use crate::mode::{HideOnDrop, HideOnDropExt};
-use crate::modules::{MainWindow, TestModelItem};
 
 static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
 static ICONS: LazyLock<Icons> = LazyLock::new(Icons::new);
@@ -32,10 +32,10 @@ fn copy_desktop_entry_cache() -> Vec<SearchRow> {
     rows.clone()
 }
 
-struct IconWorker {
-    sender: smol::channel::Sender<Arc<LauncherEntry>>,
-    task: smol::Task<Option<()>>,
-}
+// struct IconWorker {
+//     sender: smol::channel::Sender<Arc<LauncherEntry>>,
+//     task: smol::Task<Option<()>>,
+// }
 
 fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
     // immediately push cached entries
@@ -55,7 +55,7 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
         let mut new_entries = 0u32;
 
         // TODO: dropping this will cancel the work task
-        let mut icon_worker: Option<IconWorker> = None;
+        // let mut icon_worker: Option<IconWorker> = None;
 
         for entry in entries {
             let Some(exec) = entry.exec else {
@@ -82,20 +82,20 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
                 });
 
                 // try locating the icon for this desktop entry, if any, and which may have to be deferred:
-                let worker = icon_worker.get_or_insert_with(|| {
-                    let (sender, receiver) = smol::channel::unbounded();
-                    let task = smol::unblock(move || -> Option<()> {
-                        loop {
-                            let entry = receiver.recv_blocking().ok()?;
+                // let worker = icon_worker.get_or_insert_with(|| {
+                //     let (sender, receiver) = smol::channel::unbounded();
+                //     let task = smol::unblock(move || -> Option<()> {
+                //         loop {
+                //             let entry = receiver.recv_blocking().ok()?;
 
-                            find_and_set_icon(&entry);
-                        }
-                    });
+                find_and_set_icon(&launcher_entry);
+                        // }
+                    // });
+                    //
+                    // IconWorker { sender, task }
+                // });
 
-                    IconWorker { sender, task }
-                });
-
-                let _ = worker.sender.send(launcher_entry.clone());
+                // let _ = worker.sender.send_blocking(launcher_entry.clone());
 
                 let bonus_score = history.get(&launcher_entry.path).cloned().unwrap_or(0);
 
@@ -126,29 +126,34 @@ fn find_and_set_icon(launcher_entry: &Arc<LauncherEntry>) {
     };
 
     // if `Icon` is an absolute path, the image pointed at should be loaded:
-    if icon.starts_with('/') && std::fs::exists(icon).unwrap_or(false) {
-        let icon = format!("file://{icon}");
-
-        let _ = launcher_entry.icon_resolved.set(icon);
+    let path = if icon.starts_with('/') && std::fs::exists(icon).unwrap_or(false) {
+        icon.clone()
     } else {
         let icon = icon.to_string();
         let icon = ICONS.find_icon(icon.as_str(), 32, 1, "Adwaita"); // TODO: find user icon theme
 
         if let Some(icon) = icon {
             let path = icon.path.to_string_lossy().to_string();
-            let path = format!("file://{path}");
 
-            let _ = launcher_entry.icon_resolved.set(path);
+            path
+        } else {
+            return;
         }
+    };
+
+    if let Ok(image) = slint::Image::load_from_path(path.as_str().as_ref()) {
+        let buffer = image.to_rgba8().unwrap(); // TODO: unwrap?
+
+        let _ = launcher_entry.icon_resolved.set(buffer);
     }
 }
 
 pub struct Launcher {
     search: FuzzySearch<1, SearchRow>,
-    results: Vec<SearchRow>,
     bias: LauncherEntryBiasState,
     search_task: smol::Task<std::convert::Infallible>,
-    main_window: HideOnDrop<MainWindow>,
+    main_window: HideOnDrop<ui::MainWindow>,
+    model: Rc<VecModel<ui::SearchRow>>,
 }
 
 #[derive(Debug, Clone)]
@@ -157,13 +162,13 @@ struct LauncherEntry {
     path: PathBuf,
     exec: String,
     icon: Option<String>,
-    icon_resolved: OnceLock<String>,
+    icon_resolved: OnceLock<slint::SharedPixelBuffer<Rgba8Pixel>>,
 }
 
 impl App for Launcher {
     type Message = Message;
     type Output = anyhow::Result<()>;
-    
+
     const NAME: AppName = AppName::Launcher;
 
     fn create(message_sender: AppSender<Self::Message>) -> Self {
@@ -179,11 +184,12 @@ impl App for Launcher {
 
         let entries = copy_desktop_entry_cache();
 
-        // {
-        //     // TODO: avoid clone, bias should go through FuzzySearch instead
-        //     let bias = bias.history.clone();
-        //     tokio::task::spawn_blocking(move || scour_desktop_entries(pusher, &bias));
-        // }
+        {
+            // TODO: avoid clone, bias should go through FuzzySearch instead
+            let bias = bias.history.clone();
+            let _ = std::thread::spawn(move || scour_desktop_entries(pusher, &bias));
+            // let _ = std::thread::spawn(move || );
+        }
 
         let notify = search.notify();
 
@@ -199,13 +205,9 @@ impl App for Launcher {
             })
         };
 
-        let main_window: HideOnDrop<MainWindow> = MainWindow::new().expect("dkjfl;sdjfs").hide_on_drop();
+        let main_window: HideOnDrop<ui::MainWindow> = ui::MainWindow::new().unwrap().hide_on_drop();
 
-        let model = vec![
-            TestModelItem { name: "Foo".into() },
-            TestModelItem { name: "Bar".into() },
-            TestModelItem { name: "Baz".into() },
-        ];
+        let model = vec![];
 
         let model = Rc::new(VecModel::from(model));
         let model_rc: ModelRc<_> = model.clone().into();
@@ -213,17 +215,17 @@ impl App for Launcher {
         main_window.set_texts(model_rc.clone());
         {
             let message_sender = message_sender.clone();
-            main_window.on_btn_clicked(move || {
-                message_sender.finish();
-            });
+            // main_window.on_btn_clicked(move || {
+            //     message_sender.finish();
+            // });
         }
-        main_window.show();
+        main_window.show().unwrap();
 
         Launcher {
             // desktop_entries,
             main_window,
             search,
-            results: entries,
+            model,
             bias,
             search_task: task,
         }
@@ -233,7 +235,25 @@ impl App for Launcher {
         match message {
             Message::Search => {
                 self.search.tick();
-                self.results = self.search.get_matches().into_iter().cloned().collect();
+                let vec = self
+                    .search
+                    .get_matches()
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                // TODO
+                let vec = vec
+                    .into_iter()
+                    .map(|x| ui::SearchRow {
+                        icon: x.entry.icon_resolved.get()
+                            .map(|buffer| slint::Image::from_rgba8(buffer.clone()))
+                            .unwrap_or_default(),
+                        name: x.entry.name.clone().into(),
+                    })
+                    .collect::<Vec<_>>();
+
+                self.model.set_vec(vec);
             }
         }
     }
@@ -339,9 +359,9 @@ impl SearchRow {
         self.entry.name.as_str()
     }
 
-    fn icon(&self) -> Option<&str> {
-        self.entry.icon_resolved.get().map(|s| s.as_str())
-    }
+    // fn icon(&self) -> Option<&str> {
+    //     self.entry.icon_resolved.get().map(|s| s.as_str())
+    // }
 
     fn path(&self) -> &Path {
         &self.entry.path

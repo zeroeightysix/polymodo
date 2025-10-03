@@ -2,7 +2,6 @@
 //! notifying a single task of an event.
 
 use std::sync::Arc;
-use smol::lock::futures::AcquireArc;
 use smol::lock::{Semaphore, SemaphoreGuard};
 
 #[derive(Debug, Clone)]

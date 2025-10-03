@@ -10,7 +10,7 @@ mod xdg;
 mod server;
 pub mod app;
 
-pub mod modules {
+pub mod ui {
     slint::include_modules!();
 }
 

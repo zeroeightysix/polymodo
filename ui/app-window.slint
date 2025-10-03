@@ -1,15 +1,23 @@
-import { Button, VerticalBox, LineEdit, Palette, ListView } from "std-widgets.slint";
+import { Button, VerticalBox, LineEdit, Palette, ListView, StandardListView } from "std-widgets.slint";
+import { PolymodoTextInput } from "text-input.slint";
+import { LauncherEntry } from "launcher-entry.slint";
 
-export struct TestModelItem {
-    name: string
+export struct SearchRow {
+    icon: image,
+    name: string,
 }
 
 export component MainWindow inherits Window {
+    in property <[SearchRow]> texts: [{ name: "Arch linux" }];
+    in property <length> font-size: 18px;
+
     background: transparent;
+    default-font-size: font-size;
     no-frame: true;
 
-    in property <[TestModelItem]> texts;
-    callback btn_clicked <=> click_me_btn.clicked;
+    title: "launcher";
+    width: 400px;
+    height: 600px;
 
     init => {
         Palette.color-scheme = ColorScheme.dark;
@@ -25,47 +33,27 @@ export component MainWindow inherits Window {
         border-width: 1px;
     }
 
-    width: 200px;
-    height: 200px;
-
     VerticalBox {
+        vertical-stretch: 1;
+        spacing: 0;
+
+        search_box := PolymodoTextInput {
+            vertical-stretch: 0;
+        }
+
         Rectangle {
-            clip: true;
+            vertical-stretch: 1;
 
-            search_box := Rectangle {
-                height: 1rem;
+            if texts.length == 0: Text {
+                text: "No results";
+            }
 
-                TextInput {
-                    width: max(parent.width, self.preferred-width);
-                    font-size: 1.2rem;
-                    vertical-alignment: center;
-
-                    private property <length> margin: 0rem;
-                    cursor-position-changed(cursor-position) => {
-                        if (cursor-position.x + self.x < margin) {
-                            self.x = - cursor-position.x + margin;
-                        } else if (cursor-position.x + self.x > parent.width - margin - self.text-cursor-width) {
-                            self.x = parent.width - cursor-position.x - margin - self.text-cursor-width;
-                        }
-                    }
+            if texts.length != 0: ListView {
+                for item[index] in texts: LauncherEntry {
+                    width: parent.width;
+                    name: item.name;
+                    icon: item.icon;
                 }
-            }
-        }
-
-        VerticalLayout {
-            for item in texts : Text {
-                text: item.name;
-            }
-        }
-
-        label := Text {
-            text: "Button not clicked";
-        }
-        click_me_btn := Button {
-            text: "Click Me";
-
-            clicked => {
-                label.text = " Button clicked";
             }
         }
     }
