@@ -215,9 +215,9 @@ impl App for Launcher {
         main_window.set_texts(model_rc.clone());
         {
             let message_sender = message_sender.clone();
-            // main_window.on_btn_clicked(move || {
-            //     message_sender.finish();
-            // });
+            main_window.on_search_edited(move |query| {
+                message_sender.send(Message::QuerySet(query.as_str().to_string()));
+            });
         }
         main_window.show().unwrap();
 
@@ -254,6 +254,9 @@ impl App for Launcher {
                     .collect::<Vec<_>>();
 
                 self.model.set_vec(vec);
+            }
+            Message::QuerySet(query) => {
+                self.search.search::<0>(query);
             }
         }
     }
@@ -332,6 +335,7 @@ fn decrement_history_value(value: u32) -> u32 {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    QuerySet(String),
     Search,
 }
 

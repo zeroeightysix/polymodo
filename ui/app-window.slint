@@ -11,6 +11,8 @@ export component MainWindow inherits Window {
     in property <[SearchRow]> texts: [{ name: "Arch linux" }];
     in property <length> font-size: 18px;
 
+    callback search-edited(string);
+
     background: transparent;
     default-font-size: font-size;
     no-frame: true;
@@ -39,6 +41,14 @@ export component MainWindow inherits Window {
 
         search_box := PolymodoTextInput {
             vertical-stretch: 0;
+
+            init => {
+                self.focus-input();
+            }
+
+            text-edited => {
+                root.search-edited(self.text);
+            }
         }
 
         Rectangle {
