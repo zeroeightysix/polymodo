@@ -1,17 +1,15 @@
 import { Button, VerticalBox, LineEdit, Palette, ListView, StandardListView } from "std-widgets.slint";
 import { PolymodoTextInput } from "text-input.slint";
-import { LauncherEntry } from "launcher-entry.slint";
+import { LauncherEntry, LauncherEntries } from "launcher-entry.slint";
 
-export struct SearchRow {
-    icon: image,
-    name: string,
+export { LauncherEntries }
+
+export global LauncherSearch {
+    callback search-edited(/*query*/ string);
 }
 
 export component MainWindow inherits Window {
-    in property <[SearchRow]> texts: [{ name: "Arch linux" }];
     in property <length> font-size: 18px;
-
-    callback search-edited(string);
 
     background: transparent;
     default-font-size: font-size;
@@ -47,19 +45,19 @@ export component MainWindow inherits Window {
             }
 
             text-edited => {
-                root.search-edited(self.text);
+                LauncherSearch.search-edited(self.text);
             }
         }
 
         Rectangle {
             vertical-stretch: 1;
 
-            if texts.length == 0: Text {
+            if LauncherEntries.entries.length == 0: Text {
                 text: "No results";
             }
 
-            if texts.length != 0: ListView {
-                for item[index] in texts: LauncherEntry {
+            if LauncherEntries.entries.length != 0: ListView {
+                for item[index] in LauncherEntries.entries: LauncherEntry {
                     width: parent.width;
                     name: item.name;
                     icon: item.icon;

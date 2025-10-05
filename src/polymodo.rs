@@ -6,8 +6,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::rc::Rc;
-use std::sync::Arc;
-
 pub struct Polymodo {
     apps: RefCell<HashMap<app::AppKey, Box<dyn app::AppDriver>>>,
     app_finish_senders: RefCell<HashMap<app::AppKey, oneshot::Sender<Option<Box<dyn Any + Send>>>>>,

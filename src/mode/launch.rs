@@ -212,10 +212,13 @@ impl App for Launcher {
         let model = Rc::new(VecModel::from(model));
         let model_rc: ModelRc<_> = model.clone().into();
 
-        main_window.set_texts(model_rc.clone());
+        let launcher_entries = main_window.global::<ui::LauncherEntries>();
+        launcher_entries.set_entries(model_rc.clone());
+
         {
+            let launcher_search = main_window.global::<ui::LauncherSearch>();
             let message_sender = message_sender.clone();
-            main_window.on_search_edited(move |query| {
+            launcher_search.on_search_edited(move |query| {
                 message_sender.send(Message::QuerySet(query.as_str().to_string()));
             });
         }

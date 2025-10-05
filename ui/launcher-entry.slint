@@ -1,4 +1,14 @@
 import { HorizontalBox, VerticalBox } from "std-widgets.slint";
+
+export struct SearchRow {
+    icon: image,
+    name: string,
+}
+
+export global LauncherEntries {
+    in-out property <[SearchRow]> entries;
+}
+
 export component LauncherEntry {
     height: 0.1 * self.width;
 
