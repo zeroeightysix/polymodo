@@ -12,6 +12,7 @@ export component MainWindow inherits Window {
     in property <length> font-size: 18px;
 
     callback escape-pressed();
+    callback launch(/*index*/ int);
 
     background: transparent;
     default-font-size: font-size;
@@ -56,6 +57,9 @@ export component MainWindow inherits Window {
                 } else if (event.text == Key.Escape) {
                     escape-pressed();
                     return accept;
+                } else if (event.text == Key.Return) {
+                    launch(list_view.current-item);
+                    return accept;
                 }
 
                 reject
@@ -71,6 +75,7 @@ export component MainWindow inherits Window {
 
             list_view := LauncherListView {
                 model: LauncherEntries.entries;
+                current-item: 0;
 
                 if LauncherEntries.entries.length == 0: Text {
                     text: "No results";

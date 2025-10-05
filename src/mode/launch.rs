@@ -1,12 +1,12 @@
 use crate::app::{App, AppName, AppSender};
 use crate::fuzzy_search::{FuzzySearch, Row};
 use crate::mode::{HideOnDrop, HideOnDropExt};
-use crate::ui;
 use crate::xdg::find_desktop_entries;
+use crate::{main, ui};
 use anyhow::anyhow;
 use icon::Icons;
 use nucleo::Utf32String;
-use slint::{ComponentHandle, ModelRc, Rgba8Pixel, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, Rgba8Pixel, VecModel};
 use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
@@ -89,10 +89,10 @@ fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
                 //             let entry = receiver.recv_blocking().ok()?;
 
                 find_and_set_icon(&launcher_entry);
-                        // }
-                    // });
-                    //
-                    // IconWorker { sender, task }
+                // }
+                // });
+                //
+                // IconWorker { sender, task }
                 // });
 
                 // let _ = worker.sender.send_blocking(launcher_entry.clone());
@@ -154,6 +154,7 @@ pub struct Launcher {
     search_task: smol::Task<std::convert::Infallible>,
     main_window: HideOnDrop<ui::MainWindow>,
     model: Rc<VecModel<ui::SearchRow>>,
+    sender: AppSender<Message>,
 }
 
 #[derive(Debug, Clone)]
@@ -223,9 +224,23 @@ impl App for Launcher {
             });
         }
 
-        main_window.on_escape_pressed(move || {
-            message_sender.finish();
-        });
+        {
+            let message_sender = message_sender.clone();
+            main_window.on_escape_pressed(move || {
+                message_sender.finish();
+            });
+        }
+
+        {
+            let message_sender = message_sender.clone();
+            main_window.on_launch(move |index| {
+                if index < 0 {
+                    return;
+                }
+
+                message_sender.send(Message::Launch(index as usize))
+            });
+        }
 
         main_window.show().unwrap();
 
@@ -236,6 +251,7 @@ impl App for Launcher {
             model,
             bias,
             search_task: task,
+            sender: message_sender
         }
     }
 
@@ -254,7 +270,10 @@ impl App for Launcher {
                 let vec = vec
                     .into_iter()
                     .map(|x| ui::SearchRow {
-                        icon: x.entry.icon_resolved.get()
+                        icon: x
+                            .entry
+                            .icon_resolved
+                            .get()
                             .map(|buffer| slint::Image::from_rgba8(buffer.clone()))
                             .unwrap_or_default(),
                         name: x.entry.name.clone().into(),
@@ -265,6 +284,13 @@ impl App for Launcher {
             }
             Message::QuerySet(query) => {
                 self.search.search::<0>(query);
+            }
+            Message::Launch(index) => {
+                if let Some(search_row) = self.search.get_matches().get(index) {
+                    let arc = &search_row.entry;
+                    let result = launch(arc.as_ref());
+                    self.sender.finish();
+                }
             }
         }
     }
@@ -345,6 +371,7 @@ fn decrement_history_value(value: u32) -> u32 {
 pub enum Message {
     QuerySet(String),
     Search,
+    Launch(usize),
 }
 
 /// Arc around a [LauncherEntry], meant to be shareable between the fuzzy matcher and UI.
