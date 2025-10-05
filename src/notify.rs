@@ -35,6 +35,7 @@ impl Notify {
         semaphore_guard.forget(); // Prevents the permit from returning
     }
 
+    #[expect(unused)]
     pub fn acquire_blocking(&self) -> SemaphoreGuard<'_> {
         self.inner.acquire_blocking()
     }

@@ -120,10 +120,10 @@ where
 
     /// Send a message to the App, which will be received by its [App::on_message] method.
     pub fn send(&self, message: M) {
-        if let Err(_) = self.sender.try_send(AppEvent {
+        if self.sender.try_send(AppEvent {
             app_key: self.app_key,
             message: AppMessage::Message(Box::new(message)),
-        }) {
+        }).is_err() {
             log::error!("tried sending message to app, but the message receiver has been dropped: is polymodo dead?");
         }
     }

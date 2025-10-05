@@ -1,10 +1,10 @@
 use super::entry::*;
 use crate::app::{App, AppName, AppSender};
-use crate::fuzzy_search::{FuzzySearch, Row};
+use crate::fuzzy_search::FuzzySearch;
 use crate::mode::{HideOnDrop, HideOnDropExt};
 use crate::ui;
 use anyhow::anyhow;
-use slint::{ComponentHandle, ModelRc, Rgba8Pixel, VecModel};
+use slint::{ComponentHandle, ModelRc, VecModel};
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::Command;

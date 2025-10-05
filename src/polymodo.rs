@@ -6,9 +6,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::rc::Rc;
+
+type FinishSender = oneshot::Sender<Option<Box<dyn Any + Send>>>;
+
 pub struct Polymodo {
     apps: RefCell<HashMap<app::AppKey, Box<dyn app::AppDriver>>>,
-    app_finish_senders: RefCell<HashMap<app::AppKey, oneshot::Sender<Option<Box<dyn Any + Send>>>>>,
+    app_finish_senders: RefCell<HashMap<app::AppKey, FinishSender>>,
     app_message_channel: (
         smol::channel::Sender<AppEvent>,
         smol::channel::Receiver<AppEvent>,
@@ -81,7 +84,7 @@ impl Polymodo {
                 // check if anyone's listening for this app's result:
                 let mut senders = self.app_finish_senders.borrow_mut();
                 if let Some(sender) = senders.remove(&app_key) {
-                    if let Err(_) = sender.send(Some(result)) {
+                    if sender.send(Some(result)).is_err() {
                         log::warn!(
                             "could not deliver app result because the receiver has been dropped"
                         );

@@ -24,7 +24,7 @@ pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
     unreachable!()
 }
 
-pub async fn accept_clients(polymodo: PolymodoHandle, ipc_server: IpcServer) {
+async fn accept_clients(polymodo: PolymodoHandle, ipc_server: IpcServer) {
     loop {
         let Ok(client) = ipc_server.accept().await else {
             continue;
@@ -32,7 +32,9 @@ pub async fn accept_clients(polymodo: PolymodoHandle, ipc_server: IpcServer) {
 
         log::debug!("accept new connection at {:?}", client.addr());
 
-        let _ = slint::spawn_local(serve_client(polymodo.clone(), client)).expect("an event loop");
+        // explicit drop: not interested in the return value of this task.
+        // dropping it does not cancel the task
+        drop(slint::spawn_local(serve_client(polymodo.clone(), client)).expect("an event loop"));
     }
 }
 
