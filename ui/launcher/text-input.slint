@@ -1,7 +1,7 @@
 import { HorizontalBox } from "std-widgets.slint";
 export component PolymodoTextInput {
     in-out property <string> text <=> input.text;
-    in property <image> icon: @image-url("assets/magnifying-glass-solid-full.svg");
+    in property <image> icon: @image-url("../assets/magnifying-glass-solid-full.svg");
 
     callback text-edited <=> input.edited;
     callback key-pressed <=> input.key-pressed;

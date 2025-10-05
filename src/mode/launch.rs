@@ -152,7 +152,7 @@ pub struct Launcher {
     search: FuzzySearch<1, SearchRow>,
     bias: LauncherEntryBiasState,
     search_task: smol::Task<std::convert::Infallible>,
-    main_window: HideOnDrop<ui::MainWindow>,
+    main_window: HideOnDrop<ui::LauncherWindow>,
     model: Rc<VecModel<ui::SearchRow>>,
     sender: AppSender<Message>,
 }
@@ -206,7 +206,7 @@ impl App for Launcher {
             })
         };
 
-        let main_window: HideOnDrop<ui::MainWindow> = ui::MainWindow::new().unwrap().hide_on_drop();
+        let main_window: HideOnDrop<ui::LauncherWindow> = ui::LauncherWindow::new().unwrap().hide_on_drop();
 
         let model = vec![];
 
