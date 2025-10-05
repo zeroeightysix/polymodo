@@ -1,6 +1,6 @@
 import { Button, VerticalBox, LineEdit, Palette, ListView, StandardListView } from "std-widgets.slint";
 import { PolymodoTextInput } from "text-input.slint";
-import { LauncherEntry, LauncherEntries } from "launcher-entry.slint";
+import { LauncherEntry, LauncherEntries, LauncherListView } from "launcher-entry.slint";
 
 export { LauncherEntries }
 
@@ -10,6 +10,8 @@ export global LauncherSearch {
 
 export component MainWindow inherits Window {
     in property <length> font-size: 18px;
+
+    callback escape-pressed();
 
     background: transparent;
     default-font-size: font-size;
@@ -44,6 +46,21 @@ export component MainWindow inherits Window {
                 self.focus-input();
             }
 
+            key-pressed(event) => {
+                if (event.text == Key.DownArrow) {
+                    list_view.set-current-item-next();
+                    return accept;
+                } else if (event.text == Key.UpArrow) {
+                    list_view.set-current-item-previous();
+                    return accept;
+                } else if (event.text == Key.Escape) {
+                    escape-pressed();
+                    return accept;
+                }
+
+                reject
+            }
+
             text-edited => {
                 LauncherSearch.search-edited(self.text);
             }
@@ -52,15 +69,11 @@ export component MainWindow inherits Window {
         Rectangle {
             vertical-stretch: 1;
 
-            if LauncherEntries.entries.length == 0: Text {
-                text: "No results";
-            }
+            list_view := LauncherListView {
+                model: LauncherEntries.entries;
 
-            if LauncherEntries.entries.length != 0: ListView {
-                for item[index] in LauncherEntries.entries: LauncherEntry {
-                    width: parent.width;
-                    name: item.name;
-                    icon: item.icon;
+                if LauncherEntries.entries.length == 0: Text {
+                    text: "No results";
                 }
             }
         }

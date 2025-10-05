@@ -222,6 +222,11 @@ impl App for Launcher {
                 message_sender.send(Message::QuerySet(query.as_str().to_string()));
             });
         }
+
+        main_window.on_escape_pressed(move || {
+            message_sender.finish();
+        });
+
         main_window.show().unwrap();
 
         Launcher {
