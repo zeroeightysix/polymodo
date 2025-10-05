@@ -10,8 +10,6 @@ export global LauncherEntries {
 }
 
 export component LauncherEntry inherits Rectangle {
-    height: 3rem;
-
     in property <image> icon: @image-url("/usr/share/pixmaps/archlinux-logo.svg");
     in property <string> name: "Arch linux";
     in property <bool> selected;
@@ -23,10 +21,11 @@ export component LauncherEntry inherits Rectangle {
         alignment: start;
 
         Image {
+            height: 32px;
+            width: self.height;
             horizontal-alignment: ImageHorizontalAlignment.left;
             horizontal-tiling: ImageTiling.none;
             image-fit: ImageFit.contain;
-            width: self.height;
             source: icon;
         }
 
