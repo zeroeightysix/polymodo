@@ -1,3 +1,4 @@
+pub mod app;
 mod cli;
 mod config;
 mod fuzzy_search;
@@ -6,9 +7,8 @@ mod mode;
 mod notify;
 mod persistence;
 mod polymodo;
-mod xdg;
 mod server;
-pub mod app;
+mod xdg;
 
 pub mod ui {
     slint::include_modules!();
@@ -16,17 +16,19 @@ pub mod ui {
 
 use crate::cli::Args;
 use crate::ipc::{AppSpawnOptions, ClientboundMessage, IpcC2S, ServerboundMessage};
+use crate::mode::launch::Launcher;
+use crate::polymodo::Polymodo;
 use app::AppName;
 use clap::Parser;
+use slint::winit_030::winit::platform::wayland::{
+    KeyboardInteractivity, Layer, WindowAttributesWayland,
+};
+use slint::BackendSelector;
 use std::io::ErrorKind;
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
-use slint::BackendSelector;
-use slint::winit_030::winit::platform::wayland::{KeyboardInteractivity, Layer, WindowAttributesWayland};
-use crate::mode::launch::Launcher;
-use crate::polymodo::Polymodo;
 
 fn main() -> anyhow::Result<()> {
     setup_logging()?;
@@ -114,8 +116,10 @@ pub fn run_standalone() -> anyhow::Result<()> {
             let result1 = result.await;
 
             slint::quit_event_loop().expect("failed to quit");
-        }).expect("an event loop");
-    }).expect("an event loop");
+        })
+        .expect("an event loop");
+    })
+    .expect("an event loop");
 
     slint::run_event_loop_until_quit().expect("slint failed");
 

@@ -1,5 +1,5 @@
-use std::marker::PhantomData;
 use bincode::{Decode, Encode};
+use std::marker::PhantomData;
 
 pub type AppKey = u32;
 
@@ -129,10 +129,11 @@ where
     }
 
     pub fn finish(&self) {
-        self.sender.try_send(AppEvent {
-            app_key: self.app_key,
-            message: AppMessage::Finished,
-        })
+        self.sender
+            .try_send(AppEvent {
+                app_key: self.app_key,
+                message: AppMessage::Finished,
+            })
             .expect("could not send message to polymodo");
     }
 }

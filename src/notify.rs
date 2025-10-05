@@ -1,8 +1,8 @@
 //! A `Notify` type that acts like tokio's `Notify`, which is a simple semaphore for
 //! notifying a single task of an event.
 
-use std::sync::Arc;
 use smol::lock::{Semaphore, SemaphoreGuard};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct Notify {
@@ -11,7 +11,9 @@ pub struct Notify {
 
 impl Notify {
     pub fn new() -> Self {
-        Self { inner: Arc::new(Semaphore::new(0)), }
+        Self {
+            inner: Arc::new(Semaphore::new(0)),
+        }
     }
 
     /// Notify a single task of an event.
@@ -36,5 +38,4 @@ impl Notify {
     pub fn acquire_blocking(&self) -> SemaphoreGuard<'_> {
         self.inner.acquire_blocking()
     }
-
 }

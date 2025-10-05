@@ -16,17 +16,15 @@ pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
 
         let key = poly.spawn_app::<Launcher>().expect("failed to spawn app");
         log::info!("spawned launcher with key {key}");
-    }).expect("an event loop");
+    })
+    .expect("an event loop");
 
     slint::run_event_loop_until_quit()?;
 
     unreachable!()
 }
 
-pub async fn accept_clients(
-    polymodo: PolymodoHandle,
-    ipc_server: IpcServer,
-) {
+pub async fn accept_clients(polymodo: PolymodoHandle, ipc_server: IpcServer) {
     loop {
         let Ok(client) = ipc_server.accept().await else {
             continue;
@@ -34,8 +32,7 @@ pub async fn accept_clients(
 
         log::debug!("accept new connection at {:?}", client.addr());
 
-        let _ = slint::spawn_local(serve_client(polymodo.clone(), client))
-            .expect("an event loop");
+        let _ = slint::spawn_local(serve_client(polymodo.clone(), client)).expect("an event loop");
     }
 }
 
@@ -63,8 +60,13 @@ async fn serve_client(polymodo: PolymodoHandle, client: IpcS2C) {
                     return;
                 }
 
-                let app_key = polymodo.spawn_app::<Launcher>().expect("failed to spawn app");
-                let app_result = polymodo.wait_for_app_stop(app_key).await.expect("sender closed");
+                let app_key = polymodo
+                    .spawn_app::<Launcher>()
+                    .expect("failed to spawn app");
+                let app_result = polymodo
+                    .wait_for_app_stop(app_key)
+                    .await
+                    .expect("sender closed");
 
                 // TODO: what to do with this result?
 
