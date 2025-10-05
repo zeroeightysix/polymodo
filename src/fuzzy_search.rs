@@ -51,10 +51,12 @@ impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
     /// Collects the matches from the matching engine
     pub fn get_matches(&self) -> Vec<&D> {
         let snapshot = self.nucleo.snapshot();
-        let matched = snapshot
-            .matched_items(..)
-            .map(|i| i.data) // TODO
-            .collect::<Vec<_>>();
+        let matched = snapshot.matches()
+            .iter()
+            .filter(|m| m.idx != u32::MAX) // I don't know why this would occasionally happen, but it would panic.
+            .filter_map(|m| snapshot.get_item(m.idx))
+            .map(|item| item.data)
+            .collect();
 
         matched
     }
