@@ -1,0 +1,43 @@
+import { HorizontalBox } from "std-widgets.slint";
+export component PolymodoTextInput {
+    in-out property <string> text <=> input.text;
+    in property <image> icon: @image-url("assets/magnifying-glass-solid-full.svg");
+
+    callback text-edited;
+
+    public function focus-input() {
+        input.focus();
+    }
+
+    HorizontalLayout {
+        width: max(parent.width, self.preferred-width);
+        spacing: 0.25rem;
+
+        Image {
+            source: icon;
+            width: 1rem;
+            colorize: white;
+        }
+
+        Rectangle {
+            clip: true;
+
+            input := TextInput {
+                min-height: 32px;
+                vertical-alignment: center;
+
+                edited => {
+                    root.text-edited();
+                }
+
+                cursor-position-changed(cursor-position) => {
+                    if cursor-position.x + self.x < 0 {
+                        self.x = - cursor-position.x;
+                    } else if cursor-position.x + self.x > parent.width - self.text-cursor-width {
+                        self.x = parent.width - cursor-position.x - self.text-cursor-width;
+                    }
+                }
+            }
+        }
+    }
+}

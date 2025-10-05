@@ -1,0 +1,35 @@
+import { HorizontalBox, VerticalBox } from "std-widgets.slint";
+export component LauncherEntry {
+    height: 0.1 * self.width;
+
+    in property <image> icon: @image-url("/usr/share/pixmaps/archlinux-logo.svg");
+    in property <string> name: "Arch linux";
+    
+    HorizontalBox {
+        alignment: start;
+
+        Image {
+            horizontal-alignment: ImageHorizontalAlignment.left;
+            horizontal-tiling: ImageTiling.none;
+            image-fit: ImageFit.contain;
+            width: self.height;
+            source: icon;
+        }
+
+        // Slint's center text alignment appears to align on the baseline,
+        // so we push it down ever so slightly.
+        VerticalBox {
+            alignment: LayoutAlignment.center;
+            padding: 0px;
+            padding-top: 0.2rem;
+            spacing: 0px;
+
+            Text {
+                text: name;
+                vertical-alignment: TextVerticalAlignment.center;
+                font-size: 18px;
+            }
+        }
+        
+    }
+}
