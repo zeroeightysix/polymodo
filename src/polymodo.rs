@@ -108,6 +108,17 @@ impl Polymodo {
 
                 drop(apps); // explicitly release the lock, in case we ever add code below here ;)
             }
+            AppMessage::SpawnLocal(abortable) => {
+                let mut apps = self.apps.borrow_mut();
+                let Some(app) = apps.get_mut(&app_key) else {
+                    log::warn!("cannot attach task to app, because app does not exist.");
+                    return;
+                };
+
+                app.add_abortable(abortable);
+
+                drop(apps);
+            }
         }
     }
 

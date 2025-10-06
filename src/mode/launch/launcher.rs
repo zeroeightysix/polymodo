@@ -1,29 +1,32 @@
 use super::entry::*;
 use crate::app::{App, AppName, AppSender};
-use crate::fuzzy_search::FuzzySearch;
 use crate::mode::{HideOnDrop, HideOnDropExt};
 use crate::ui;
 use anyhow::anyhow;
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelExt, ModelRc, VecModel};
 use std::io::Write;
-use std::os::unix::process::CommandExt;
+use std::os::unix::prelude::CommandExt;
 use std::process::Command;
 use std::rc::Rc;
+use std::sync::Arc;
+use crate::fuzzy_search::FuzzySearch;
+
+pub(super) type LauncherEntriesModel = Rc<VecModel<LauncherEntryUi>>;
 
 #[derive(Debug, Clone)]
 pub enum Message {
     QuerySet(String),
-    UpdateSearchResults,
     Launch(usize),
+    SearchUpdated,
 }
 
 pub struct Launcher {
-    search: FuzzySearch<1, SearchRow>,
-    bias: super::LauncherEntryBiasState,
-    search_task: smol::Task<std::convert::Infallible>,
+    entries: LauncherEntriesModel,
+    filtered_entries: ModelRc<LauncherEntryUi>,
+    #[expect(unused)]
     main_window: HideOnDrop<ui::LauncherWindow>,
-    model: Rc<VecModel<ui::SearchRow>>,
     sender: AppSender<Message>,
+    search: FuzzySearch<1, Arc<LauncherEntry>>,
 }
 
 impl App for Launcher {
@@ -39,12 +42,28 @@ impl App for Launcher {
                 .ok()
                 .unwrap_or_default();
 
+        let main_window: HideOnDrop<ui::LauncherWindow> =
+            ui::LauncherWindow::new().unwrap().hide_on_drop();
+
+        let model: LauncherEntriesModel = Default::default();
+
+        // The model passed to the UI is filtered on the `shown` property on LauncherEntryUi,
+        // converted to the slint struct that represents each entry.
+        let filtered_model = Rc::new(model.clone().filter(|entry| entry.shown));
+
+        {
+            let mapped_model = filtered_model.clone().map(|entry| entry.to_slint());
+
+            main_window
+                .global::<ui::LauncherEntries>()
+                .set_entries(ModelRc::new(mapped_model));
+        }
+
         let mut config = nucleo::Config::DEFAULT;
         config.prefer_prefix = true;
         let search = FuzzySearch::create_with_config(config);
         let pusher = search.pusher();
-
-        let entries = copy_desktop_entry_cache();
+        let notify = search.notify();
 
         {
             // TODO: avoid clone, bias should go through FuzzySearch instead
@@ -53,39 +72,28 @@ impl App for Launcher {
             // let _ = std::thread::spawn(move || );
         }
 
-        let notify = search.notify();
-
-        let task = {
-            let message_sender = message_sender.clone();
-
-            smol::spawn(async move {
+        {
+            let sender = message_sender.clone();
+            message_sender.spawn(async move {
                 loop {
                     notify.acquire().await;
 
-                    message_sender.send(Message::UpdateSearchResults);
+                    sender.send(Message::SearchUpdated)
                 }
-            })
-        };
-
-        let main_window: HideOnDrop<ui::LauncherWindow> =
-            ui::LauncherWindow::new().unwrap().hide_on_drop();
-
-        let model = vec![];
-
-        let model = Rc::new(VecModel::from(model));
-        let model_rc: ModelRc<_> = model.clone().into();
-
-        let launcher_entries = main_window.global::<ui::LauncherEntries>();
-        launcher_entries.set_entries(model_rc.clone());
-
-        {
-            let launcher_search = main_window.global::<ui::LauncherSearch>();
-            let message_sender = message_sender.clone();
-            launcher_search.on_search_edited(move |query| {
-                message_sender.send(Message::QuerySet(query.as_str().to_string()));
             });
         }
 
+        // On search query edit
+        {
+            let message_sender = message_sender.clone();
+            main_window
+                .global::<ui::LauncherSearch>()
+                .on_search_edited(move |query| {
+                    message_sender.send(Message::QuerySet(query.as_str().to_string()));
+                });
+        }
+
+        // On escape
         {
             let message_sender = message_sender.clone();
             main_window.on_escape_pressed(move || {
@@ -93,6 +101,7 @@ impl App for Launcher {
             });
         }
 
+        // On enter (launch)
         {
             let message_sender = message_sender.clone();
             main_window.on_launch(move |index| {
@@ -107,52 +116,34 @@ impl App for Launcher {
         main_window.show().unwrap();
 
         Launcher {
-            // desktop_entries,
-            main_window,
+            entries: model,
+            filtered_entries: filtered_model.into(),
             search,
-            model,
-            bias,
-            search_task: task,
+            main_window,
             sender: message_sender,
         }
     }
 
     fn on_message(&mut self, message: Self::Message) {
         match message {
-            Message::UpdateSearchResults => {
-                self.search.tick();
-                let vec = self
-                    .search
-                    .get_matches()
-                    .into_iter()
-                    .cloned()
-                    .collect::<Vec<_>>();
-
-                // TODO
-                let vec = vec
-                    .into_iter()
-                    .map(|x| ui::SearchRow {
-                        icon: x
-                            .entry
-                            .icon_resolved
-                            .get()
-                            .map(|buffer| slint::Image::from_rgba8(buffer.clone()))
-                            .unwrap_or_default(),
-                        name: x.entry.name.clone().into(),
-                    })
-                    .collect::<Vec<_>>();
-
-                self.model.set_vec(vec);
-            }
             Message::QuerySet(query) => {
                 self.search.search::<0>(query);
             }
             Message::Launch(index) => {
-                if let Some(search_row) = self.search.get_matches().get(index) {
-                    let arc = &search_row.entry;
-                    let result = launch(arc.as_ref());
+                if let Some(LauncherEntryUi { entry, .. }) = self.filtered_entries.row_data(index) {
+                    // TODO: handle?
+                    let result = launch(entry.as_ref());
                     self.sender.finish();
                 }
+            }
+            Message::SearchUpdated => {
+                self.search.tick();
+                let matches: Vec<_> = self.search.get_matches()
+                    .into_iter()
+                    .map(Arc::clone)
+                    .map(LauncherEntryUi::from)
+                    .collect();
+                self.entries.set_vec(matches);
             }
         }
     }
@@ -162,7 +153,64 @@ impl App for Launcher {
     }
 }
 
+impl Launcher {
+    pub fn mutate_entry<R>(
+        &self,
+        row: usize,
+        map: impl FnOnce(&mut LauncherEntryUi) -> R,
+    ) -> Option<R> {
+        if let Some(mut entry_ui) = self.entries.row_data(row) {
+            let r = map(&mut entry_ui);
+
+            self.entries.set_row_data(row, entry_ui);
+
+            Some(r)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LauncherEntryUi {
+    /// Whether this entry should be shown in the UI
+    shown: bool,
+    /// The launcher entry this corresponds with
+    entry: Arc<LauncherEntry>,
+}
+
+impl LauncherEntryUi {
+    pub fn to_slint(&self) -> ui::LauncherEntry {
+        let LauncherEntry::Desktop(DesktopEntry {
+            icon_resolved,
+            name,
+            ..
+        }) = self.entry.as_ref();
+
+        let icon = icon_resolved
+            .get()
+            .map(|buffer| slint::Image::from_rgba8(buffer.clone()))
+            .unwrap_or_default();
+
+        ui::LauncherEntry {
+            icon,
+            name: name.into(),
+        }
+    }
+}
+
+impl From<Arc<LauncherEntry>> for LauncherEntryUi {
+    fn from(value: Arc<LauncherEntry>) -> Self {
+        Self {
+            shown: true,
+            entry: value,
+        }
+    }
+}
+
 fn launch(entry: &LauncherEntry) -> anyhow::Result<()> {
+    let LauncherEntry::Desktop(entry) = entry;
+
     match fork::fork().map_err(|_| anyhow!("failed to fork process"))? {
         fork::Fork::Child => {
             // detach

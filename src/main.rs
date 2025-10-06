@@ -1,7 +1,6 @@
 pub mod app;
 mod cli;
 mod config;
-mod fuzzy_search;
 mod ipc;
 mod mode;
 mod notify;
@@ -9,6 +8,7 @@ mod persistence;
 mod polymodo;
 mod server;
 mod xdg;
+mod fuzzy_search;
 
 pub mod ui {
     slint::include_modules!();

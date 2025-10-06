@@ -1,5 +1,8 @@
+use std::future::Future;
 use bincode::{Decode, Encode};
 use std::marker::PhantomData;
+use std::mem::MaybeUninit;
+use smol::channel::TrySendError;
 
 pub type AppKey = u32;
 
@@ -33,6 +36,8 @@ pub trait AppDriver {
 
     fn app_name(&self) -> AppName;
 
+    fn add_abortable(&mut self, abortable: AbortOnDrop);
+
     fn on_message(&mut self, message: Box<dyn std::any::Any>);
 
     /// Stop the driven application. This mirrors [App]'s `stop` function, but is non-consuming.
@@ -46,6 +51,7 @@ pub trait AppDriver {
 struct AppDriverImpl<A> {
     key: AppKey,
     app: Option<A>,
+    abortables: Vec<AbortOnDrop<>>
 }
 
 impl<A> AppDriverImpl<A> {
@@ -53,6 +59,7 @@ impl<A> AppDriverImpl<A> {
         Self {
             key,
             app: Some(app),
+            abortables: Vec::new(),
         }
     }
 }
@@ -69,6 +76,10 @@ where
 
     fn app_name(&self) -> AppName {
         A::NAME
+    }
+
+    fn add_abortable(&mut self, abortable: AbortOnDrop) {
+        self.abortables.push(abortable);
     }
 
     fn on_message(&mut self, message: Box<dyn std::any::Any>) {
@@ -118,22 +129,32 @@ where
         }
     }
 
+    fn send_event(&self, message: AppMessage) -> Result<(), TrySendError<AppEvent>> {
+        self.sender.try_send(AppEvent {
+            app_key: self.app_key,
+            message,
+        })
+    }
+
+    pub fn spawn<T: 'static>(&self, fut: impl Future<Output = T> + 'static) {
+        let join_handle = slint::spawn_local(fut)
+            .expect("an event loop");
+        let message = AppMessage::SpawnLocal(AbortOnDrop::new(Box::new(join_handle)));
+
+        if self.send_event(message).is_err() {
+            log::error!("tried sending a task to polymodo, but the message receiver has been dropped; is polymodo dead?");
+        };
+    }
+
     /// Send a message to the App, which will be received by its [App::on_message] method.
     pub fn send(&self, message: M) {
-        if self.sender.try_send(AppEvent {
-            app_key: self.app_key,
-            message: AppMessage::Message(Box::new(message)),
-        }).is_err() {
+        if self.send_event(AppMessage::Message(Box::new(message))).is_err() {
             log::error!("tried sending message to app, but the message receiver has been dropped: is polymodo dead?");
         }
     }
 
     pub fn finish(&self) {
-        self.sender
-            .try_send(AppEvent {
-                app_key: self.app_key,
-                message: AppMessage::Finished,
-            })
+        self.send_event(AppMessage::Finished)
             .expect("could not send message to polymodo");
     }
 }
@@ -148,6 +169,44 @@ pub enum AppMessage {
     Finished,
     /// Message to app
     Message(Box<dyn std::any::Any + Send>),
+    /// App spawned a task and wishes for the runtime to manage it
+    SpawnLocal(AbortOnDrop)
+}
+
+pub trait Abortable {
+    fn abort(&self);
+}
+
+impl<T> Abortable for slint::JoinHandle<T> {
+    fn abort(&self) {
+        // yeah
+        let mut copy: MaybeUninit<slint::JoinHandle<T>> = MaybeUninit::uninit();
+        let dst = copy.as_mut_ptr();
+
+        let copy = unsafe {
+            std::ptr::copy(self as *const _, dst, 1);
+
+            copy.assume_init()
+        };
+
+        copy.abort()
+    }
+}
+
+pub struct AbortOnDrop(Option<Box<dyn Abortable>>);
+
+impl AbortOnDrop {
+    pub fn new(value: Box<dyn Abortable>) -> Self {
+        Self(Some(value))
+    }
+}
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        if let Some(s) = self.0.take() {
+            s.abort();
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Decode, Encode)]

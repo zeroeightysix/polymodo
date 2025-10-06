@@ -1,15 +1,15 @@
 import { HorizontalBox, VerticalBox, ListView } from "std-widgets.slint";
 
-export struct SearchRow {
+export struct LauncherEntry {
     icon: image,
     name: string,
 }
 
 export global LauncherEntries {
-    in-out property <[SearchRow]> entries: [{ name:"Test entry" }];
+    in-out property <[LauncherEntry]> entries: [{ name:"Test entry" }];
 }
 
-export component LauncherEntry inherits Rectangle {
+export component LauncherEntryDelegate inherits Rectangle {
     in property <image> icon: @image-url("/usr/share/pixmaps/archlinux-logo.svg");
     in property <string> name: "Arch linux";
     in property <bool> selected;
@@ -47,7 +47,7 @@ export component LauncherEntry inherits Rectangle {
 }
 
 component StandardListViewBase inherits ListView {
-    in property <[SearchRow]> model;
+    in property <[LauncherEntry]> model;
     in-out property <int> current-item: -1;
 
     callback current-item-changed(current-item: int);
@@ -172,7 +172,7 @@ component StandardListViewBase inherits ListView {
         root.bring-into-view(root.focus-item);
     }
 
-    for item[index] in root.model: LauncherEntry {
+    for item[index] in root.model: LauncherEntryDelegate {
         selected: index == root.current-item;
 //        has-focus: root.has-focus && index == root.focus-item;
 //        has-hover: i-touch-area.has-hover;

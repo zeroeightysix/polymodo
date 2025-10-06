@@ -1,16 +1,46 @@
-use super::LaunchHistory;
+use super::*;
 use crate::fuzzy_search::Row;
 use slint::Rgba8Pixel;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Instant;
 
-static DESKTOP_ENTRIES: Mutex<Vec<SearchRow>> = Mutex::new(Vec::new());
+static DESKTOP_ENTRIES: Mutex<Vec<Arc<LauncherEntry>>> = Mutex::new(Vec::new());
 
 static ICONS: LazyLock<icon::Icons> = LazyLock::new(icon::Icons::new);
 
 #[derive(Debug, Clone)]
-pub struct LauncherEntry {
+pub enum LauncherEntry {
+    Desktop(DesktopEntry),
+}
+
+impl Row<1> for Arc<LauncherEntry> {
+    type Output = nucleo::Utf32String;
+
+    fn columns(&self) -> [Self::Output; 1] {
+        [self.name().into()]
+    }
+}
+
+impl LauncherEntry {
+    pub fn name(&self) -> &str {
+        let LauncherEntry::Desktop(DesktopEntry { name, .. }) = self;
+        name.as_str()
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        let LauncherEntry::Desktop(DesktopEntry { path, .. }) = self;
+        path.as_path()
+    }
+
+    pub fn icon(&self) -> Option<&str> {
+        let LauncherEntry::Desktop(DesktopEntry { icon, .. }) = self;
+        icon.as_deref()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DesktopEntry {
     pub name: String,
     pub path: PathBuf,
     pub exec: String,
@@ -18,44 +48,11 @@ pub struct LauncherEntry {
     pub icon_resolved: OnceLock<slint::SharedPixelBuffer<Rgba8Pixel>>,
 }
 
-/// Arc around a [LauncherEntry], meant to be shareable between the fuzzy matcher and UI.
-#[derive(Clone, Debug)]
-pub struct SearchRow {
-    pub entry: Arc<LauncherEntry>,
-    pub bonus_score: u32,
-}
-
-impl Row<1> for SearchRow {
-    type Output = nucleo::Utf32String;
-
-    fn columns(&self) -> [Self::Output; 1] {
-        [self.name().into()]
-    }
-
-    fn bonus(&self) -> u32 {
-        self.bonus_score
-    }
-}
-
-impl SearchRow {
-    fn name(&self) -> &str {
-        self.entry.name.as_str()
-    }
-
-    // fn icon(&self) -> Option<&str> {
-    //     self.entry.icon_resolved.get().map(|s| s.as_str())
-    // }
-
-    pub fn path(&self) -> &Path {
-        &self.entry.path
-    }
-}
-
 struct IconWorker {
     sender: smol::channel::Sender<Arc<LauncherEntry>>,
 }
 
-pub fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory) {
+pub fn scour_desktop_entries(pusher: impl Fn(Arc<LauncherEntry>), history: &LaunchHistory) {
     // immediately push cached entries
     {
         let rows = DESKTOP_ENTRIES.lock().unwrap();
@@ -91,13 +88,13 @@ pub fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory
                 new_entries += 1;
 
                 // add a new search entry for this desktop entry.
-                let launcher_entry = Arc::new(LauncherEntry {
+                let launcher_entry = Arc::new(LauncherEntry::Desktop(DesktopEntry {
                     name: entry.name,
                     path: entry.source_path,
                     exec,
                     icon: entry.icon,
                     icon_resolved: OnceLock::new(),
-                });
+                }));
 
                 // try locating the icon for this desktop entry, if any, and which may have to be deferred:
                 // let worker = icon_worker.get_or_insert_with(|| {
@@ -115,12 +112,9 @@ pub fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory
 
                 // let _ = worker.sender.send_blocking(launcher_entry.clone());
 
-                let bonus_score = history.get(&launcher_entry.path).cloned().unwrap_or(0);
+                // let bonus_score = history.get(&launcher_entry.path).cloned().unwrap_or(0);
 
-                rows.push(SearchRow {
-                    entry: launcher_entry,
-                    bonus_score,
-                });
+                rows.push(launcher_entry);
 
                 // and also add it to the fuzzy searcher
                 let entry = rows.last().unwrap().clone();
@@ -139,13 +133,13 @@ pub fn scour_desktop_entries(pusher: impl Fn(SearchRow), history: &LaunchHistory
 fn find_and_set_icon(launcher_entry: &Arc<LauncherEntry>) {
     let launcher_entry = launcher_entry.clone();
 
-    let Some(icon) = launcher_entry.icon.as_ref() else {
+    let Some(icon) = launcher_entry.icon() else {
         return;
     };
 
     // if `Icon` is an absolute path, the image pointed at should be loaded:
     let path = if icon.starts_with('/') && std::fs::exists(icon).unwrap_or(false) {
-        icon.clone()
+        icon.to_string()
     } else {
         let icon = icon.to_string();
         let icon = ICONS.find_icon(icon.as_str(), 32, 1, "Adwaita"); // TODO: find user icon theme
@@ -162,12 +156,7 @@ fn find_and_set_icon(launcher_entry: &Arc<LauncherEntry>) {
     if let Ok(image) = slint::Image::load_from_path(path.as_str().as_ref()) {
         let buffer = image.to_rgba8().unwrap(); // TODO: unwrap?
 
-        let _ = launcher_entry.icon_resolved.set(buffer);
+        let LauncherEntry::Desktop(DesktopEntry { icon_resolved, .. }) = launcher_entry.as_ref();
+        let _ = icon_resolved.set(buffer);
     }
-}
-
-pub fn copy_desktop_entry_cache() -> Vec<SearchRow> {
-    let rows = DESKTOP_ENTRIES.lock().unwrap();
-
-    rows.clone()
 }

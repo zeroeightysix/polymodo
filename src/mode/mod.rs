@@ -3,6 +3,7 @@ use std::ops::Deref;
 
 pub mod launch;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HideOnDrop<T: ComponentHandle>(pub T);
 
 pub trait HideOnDropExt: ComponentHandle + Sized {
