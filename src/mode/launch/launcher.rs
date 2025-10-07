@@ -1,32 +1,34 @@
 use super::entry::*;
 use crate::app::{App, AppName, AppSender};
+use crate::fuzzy_search::FuzzySearch;
 use crate::mode::{HideOnDrop, HideOnDropExt};
 use crate::ui;
+use crate::ui::index_model::IndexModel;
 use anyhow::anyhow;
-use slint::{ComponentHandle, Model, ModelExt, ModelRc, VecModel};
+use slint::{ComponentHandle, ModelExt, ModelRc};
 use std::io::Write;
 use std::os::unix::prelude::CommandExt;
 use std::process::Command;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use crate::fuzzy_search::FuzzySearch;
 
-pub(super) type LauncherEntriesModel = Rc<VecModel<LauncherEntryUi>>;
+pub(super) type LauncherEntriesModel = Rc<IndexModel<EntryId, LauncherEntry>>;
 
 #[derive(Debug, Clone)]
 pub enum Message {
     QuerySet(String),
-    Launch(usize),
+    Launch(EntryId),
+    NewEntry(Arc<DesktopEntry>),
     SearchUpdated,
 }
 
 pub struct Launcher {
     entries: LauncherEntriesModel,
-    filtered_entries: ModelRc<LauncherEntryUi>,
     #[expect(unused)]
     main_window: HideOnDrop<ui::LauncherWindow>,
     sender: AppSender<Message>,
-    search: FuzzySearch<1, Arc<LauncherEntry>>,
+    search: FuzzySearch<1, SearchEntry>,
 }
 
 impl App for Launcher {
@@ -47,23 +49,30 @@ impl App for Launcher {
 
         let model: LauncherEntriesModel = Default::default();
 
-        // The model passed to the UI is filtered on the `shown` property on LauncherEntryUi,
-        // converted to the slint struct that represents each entry.
-        let filtered_model = Rc::new(model.clone().filter(|entry| entry.shown));
-
         {
-            let mapped_model = filtered_model.clone().map(|entry| entry.to_slint());
+            // The model passed to the UI is filtered on the `shown` property on LauncherEntryUi,
+            // converted to the slint struct that represents each entry.
+            let model = model
+                .clone()
+                .filter(|entry| entry.shown)
+                .map(|entry| entry.to_slint());
 
             main_window
                 .global::<ui::LauncherEntries>()
-                .set_entries(ModelRc::new(mapped_model));
+                .set_entries(ModelRc::new(model));
         }
 
-        let mut config = nucleo::Config::DEFAULT;
-        config.prefer_prefix = true;
-        let search = FuzzySearch::create_with_config(config);
-        let pusher = search.pusher();
-        let notify = search.notify();
+        let search: FuzzySearch<1, SearchEntry> = FuzzySearch::create_with_config({
+            let mut config = nucleo::Config::DEFAULT;
+            config.prefer_prefix = true;
+            config
+        });
+
+        let pusher = {
+            let sender = message_sender.clone();
+
+            move |entry: Arc<DesktopEntry>| sender.send(Message::NewEntry(entry))
+        };
 
         {
             // TODO: avoid clone, bias should go through FuzzySearch instead
@@ -73,6 +82,7 @@ impl App for Launcher {
         }
 
         {
+            let notify = search.notify();
             let sender = message_sender.clone();
             message_sender.spawn(async move {
                 loop {
@@ -104,12 +114,12 @@ impl App for Launcher {
         // On enter (launch)
         {
             let message_sender = message_sender.clone();
-            main_window.on_launch(move |index| {
-                if index < 0 {
+            main_window.on_launch(move |id| {
+                if id < 0 {
                     return;
                 }
 
-                message_sender.send(Message::Launch(index as usize))
+                message_sender.send(Message::Launch(EntryId(id as usize)))
             });
         }
 
@@ -117,7 +127,6 @@ impl App for Launcher {
 
         Launcher {
             entries: model,
-            filtered_entries: filtered_model.into(),
             search,
             main_window,
             sender: message_sender,
@@ -129,21 +138,48 @@ impl App for Launcher {
             Message::QuerySet(query) => {
                 self.search.search::<0>(query);
             }
-            Message::Launch(index) => {
-                if let Some(LauncherEntryUi { entry, .. }) = self.filtered_entries.row_data(index) {
+            Message::Launch(entry_id) => {
+                if let Some(LauncherEntry { desktop, .. }) =
+                    self.entries.get_value_of_key(&entry_id)
+                {
                     // TODO: handle?
-                    let result = launch(entry.as_ref());
+                    let result = launch(desktop.as_ref());
                     self.sender.finish();
                 }
             }
             Message::SearchUpdated => {
                 self.search.tick();
-                let matches: Vec<_> = self.search.get_matches()
+
+                let matches: Vec<_> = self
+                    .search
+                    .get_matches()
                     .into_iter()
-                    .map(Arc::clone)
-                    .map(LauncherEntryUi::from)
+                    .map(|entry| entry.for_id)
                     .collect();
-                self.entries.set_vec(matches);
+
+                self.entries.mutate_all(|_, entry_id, v| {
+                    let shown = matches.contains(entry_id);
+                    v.shown = shown;
+                });
+            }
+            Message::NewEntry(entry) => {
+                static IDX: AtomicUsize = AtomicUsize::new(0);
+
+                let idx = IDX.fetch_add(1, Ordering::Relaxed);
+                let id = EntryId(idx);
+
+                self.search.push(SearchEntry {
+                    for_id: id,
+                    text: entry.name.clone(),
+                });
+                self.entries.insert(
+                    id,
+                    LauncherEntry {
+                        id,
+                        shown: true,
+                        desktop: entry,
+                    },
+                );
             }
         }
     }
@@ -153,39 +189,38 @@ impl App for Launcher {
     }
 }
 
-impl Launcher {
-    pub fn mutate_entry<R>(
-        &self,
-        row: usize,
-        map: impl FnOnce(&mut LauncherEntryUi) -> R,
-    ) -> Option<R> {
-        if let Some(mut entry_ui) = self.entries.row_data(row) {
-            let r = map(&mut entry_ui);
+#[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct EntryId(pub usize);
 
-            self.entries.set_row_data(row, entry_ui);
+pub struct SearchEntry {
+    for_id: EntryId,
+    text: String,
+}
 
-            Some(r)
-        } else {
-            None
-        }
+impl crate::fuzzy_search::Row<1> for SearchEntry {
+    type Output = nucleo::Utf32String;
+
+    fn columns(&self) -> [Self::Output; 1] {
+        [self.text.clone().into()]
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct LauncherEntryUi {
+pub struct LauncherEntry {
+    id: EntryId,
     /// Whether this entry should be shown in the UI
     shown: bool,
-    /// The launcher entry this corresponds with
-    entry: Arc<LauncherEntry>,
+    /// The desktop entry this corresponds with
+    desktop: Arc<DesktopEntry>,
 }
 
-impl LauncherEntryUi {
+impl LauncherEntry {
     pub fn to_slint(&self) -> ui::LauncherEntry {
-        let LauncherEntry::Desktop(DesktopEntry {
+        let DesktopEntry {
             icon_resolved,
             name,
             ..
-        }) = self.entry.as_ref();
+        } = self.desktop.as_ref();
 
         let icon = icon_resolved
             .get()
@@ -194,23 +229,13 @@ impl LauncherEntryUi {
 
         ui::LauncherEntry {
             icon,
+            id: self.id.0 as i32,
             name: name.into(),
         }
     }
 }
 
-impl From<Arc<LauncherEntry>> for LauncherEntryUi {
-    fn from(value: Arc<LauncherEntry>) -> Self {
-        Self {
-            shown: true,
-            entry: value,
-        }
-    }
-}
-
-fn launch(entry: &LauncherEntry) -> anyhow::Result<()> {
-    let LauncherEntry::Desktop(entry) = entry;
-
+fn launch(desktop: &DesktopEntry) -> anyhow::Result<()> {
     match fork::fork().map_err(|_| anyhow!("failed to fork process"))? {
         fork::Fork::Child => {
             // detach
@@ -219,7 +244,7 @@ fn launch(entry: &LauncherEntry) -> anyhow::Result<()> {
             }
 
             // %f and %F: lists of files. polymodo does not yet support selecting files.
-            let exec = entry.exec.replace("%f", "").replace("%F", "");
+            let exec = desktop.exec.replace("%f", "").replace("%F", "");
             // same story for %u and %U:
             let exec = exec.replace("%u", "").replace("%U", "");
 
@@ -227,10 +252,10 @@ fn launch(entry: &LauncherEntry) -> anyhow::Result<()> {
             let mut args = exec
                 .split(" ")
                 .flat_map(|arg| match arg {
-                    "%i" => vec!["--icon", entry.icon.as_deref().unwrap_or("")],
-                    "%c" => vec![entry.name.as_str()],
+                    "%i" => vec!["--icon", desktop.icon.as_deref().unwrap_or("")],
+                    "%c" => vec![desktop.name.as_str()],
                     "%k" => {
-                        vec![entry.path.as_os_str().to_str().unwrap_or("")]
+                        vec![desktop.path.as_os_str().to_str().unwrap_or("")]
                     }
                     // remove empty strings as arguments; these may be left over from
                     //   trailing/subsequent whitespaces, and cause programs to misbehave.
@@ -253,7 +278,7 @@ fn launch(entry: &LauncherEntry) -> anyhow::Result<()> {
             std::process::exit(-1);
         }
         fork::Fork::Parent(pid) => {
-            log::info!("Launching {:?} with pid {pid}", entry.name.as_str());
+            log::info!("Launching {:?} with pid {pid}", desktop.name.as_str());
 
             let _ = std::io::stdout().flush();
             Ok(())

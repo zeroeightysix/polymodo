@@ -1,18 +1,15 @@
 pub mod app;
 mod cli;
 mod config;
+mod fuzzy_search;
 mod ipc;
 mod mode;
 mod notify;
 mod persistence;
 mod polymodo;
 mod server;
+mod ui;
 mod xdg;
-mod fuzzy_search;
-
-pub mod ui {
-    slint::include_modules!();
-}
 
 use crate::cli::Args;
 use crate::ipc::{AppSpawnOptions, ClientboundMessage, IpcC2S, ServerboundMessage};

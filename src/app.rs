@@ -1,8 +1,8 @@
-use std::future::Future;
 use bincode::{Decode, Encode};
+use smol::channel::TrySendError;
+use std::future::Future;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
-use smol::channel::TrySendError;
 
 pub type AppKey = u32;
 
@@ -51,7 +51,7 @@ pub trait AppDriver {
 struct AppDriverImpl<A> {
     key: AppKey,
     app: Option<A>,
-    abortables: Vec<AbortOnDrop<>>
+    abortables: Vec<AbortOnDrop>,
 }
 
 impl<A> AppDriverImpl<A> {
@@ -136,9 +136,8 @@ where
         })
     }
 
-    pub fn spawn<T: 'static>(&self, fut: impl Future<Output = T> + 'static) {
-        let join_handle = slint::spawn_local(fut)
-            .expect("an event loop");
+    pub fn spawn<T: 'static + Send>(&self, fut: impl Future<Output = T> + 'static) {
+        let join_handle = slint::spawn_local(fut).expect("an event loop");
         let message = AppMessage::SpawnLocal(AbortOnDrop::new(Box::new(join_handle)));
 
         if self.send_event(message).is_err() {
@@ -148,7 +147,10 @@ where
 
     /// Send a message to the App, which will be received by its [App::on_message] method.
     pub fn send(&self, message: M) {
-        if self.send_event(AppMessage::Message(Box::new(message))).is_err() {
+        if self
+            .send_event(AppMessage::Message(Box::new(message)))
+            .is_err()
+        {
             log::error!("tried sending message to app, but the message receiver has been dropped: is polymodo dead?");
         }
     }
@@ -170,7 +172,7 @@ pub enum AppMessage {
     /// Message to app
     Message(Box<dyn std::any::Any + Send>),
     /// App spawned a task and wishes for the runtime to manage it
-    SpawnLocal(AbortOnDrop)
+    SpawnLocal(AbortOnDrop),
 }
 
 pub trait Abortable {
@@ -193,10 +195,10 @@ impl<T> Abortable for slint::JoinHandle<T> {
     }
 }
 
-pub struct AbortOnDrop(Option<Box<dyn Abortable>>);
+pub struct AbortOnDrop(Option<Box<dyn Abortable + Send>>);
 
 impl AbortOnDrop {
-    pub fn new(value: Box<dyn Abortable>) -> Self {
+    pub fn new(value: Box<dyn Abortable + Send>) -> Self {
         Self(Some(value))
     }
 }

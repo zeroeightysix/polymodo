@@ -12,7 +12,7 @@ export component LauncherWindow inherits Window {
     in property <length> font-size: 18px;
 
     callback escape-pressed();
-    callback launch(/*index*/ int);
+    callback launch(/*id*/ int);
 
     background: transparent;
     default-font-size: font-size;
@@ -58,7 +58,11 @@ export component LauncherWindow inherits Window {
                     escape-pressed();
                     return accept;
                 } else if (event.text == Key.Return) {
-                    launch(list_view.current-item);
+                    let c = list_view.current-item;
+                    if c >= 0 && c < LauncherEntries.entries.length {
+                        launch(LauncherEntries.entries[c].id);
+                    }
+
                     return accept;
                 }
 

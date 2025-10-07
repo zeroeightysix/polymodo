@@ -3417,6 +3417,7 @@ dependencies = [
  "derive_more",
  "fork",
  "icon",
+ "indexmap",
  "log",
  "log-panics",
  "nix",
