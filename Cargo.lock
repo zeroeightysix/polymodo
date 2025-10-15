@@ -3213,6 +3213,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4895175b425cb1f87721b59f0f286c2092bd4af812243672510e1ac53e2e0ad"
 
 [[package]]
+name = "once_map"
+version = "0.4.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29eefd5038c9eee9e788d90966d6b5578dd3f88363a91edaec117a7ae0adc2d5"
+dependencies = [
+ "ahash",
+ "hashbrown 0.16.0",
+ "parking_lot",
+ "stable_deref_trait",
+]
+
+[[package]]
 name = "oneshot"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3422,6 +3434,7 @@ dependencies = [
  "log-panics",
  "nix",
  "nucleo",
+ "once_map",
  "oneshot",
  "rand 0.9.2",
  "rust-ini",

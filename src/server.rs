@@ -23,7 +23,7 @@ pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
         let key = poly.spawn_app::<Launcher>().expect("failed to spawn app");
         log::info!("spawned launcher with key {key}");
     })
-        .expect("an event loop");
+    .expect("an event loop");
 
     slint::run_event_loop_until_quit()?;
 
@@ -76,12 +76,11 @@ async fn serve_client(polymodo: PolymodoHandle, client: IpcS2C) {
                     .await
                     .expect("sender closed"); // todo: no expect
 
-                let result: anyhow::Result<_> = app_result.ok_or(ServerError::FailedToGetResult.into())
+                let result: anyhow::Result<_> = app_result
+                    .ok_or(ServerError::FailedToGetResult.into())
                     .and_then(|result| result.to_json());
 
-                let result = result.unwrap_or_else(|e| {
-                    format!("{e}")
-                });
+                let result = result.unwrap_or_else(|e| format!("{e}"));
 
                 if let Err(e) = client.send(ClientboundMessage::AppResult(result)).await {
                     log::error!("failed to send result to client: {e}")

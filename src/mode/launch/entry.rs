@@ -1,14 +1,28 @@
 use super::*;
+use crate::app::AppSender;
+use once_map::OnceMap;
 use slint::{Rgba8Pixel, SharedString};
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
-use crate::app::AppSender;
+
+type IconPath = String;
+pub type Pixels = slint::SharedPixelBuffer<Rgba8Pixel>;
 
 static DESKTOP_ENTRIES: Mutex<Vec<Arc<DesktopEntry>>> = Mutex::new(Vec::new());
 
 static ICONS: LazyLock<icon::Icons> = LazyLock::new(icon::Icons::new);
+
+// contains a None entry if we tried loading the icon, but failed
+static ICONS_RENDERED: LazyLock<OnceMap<IconPath, Box<RenderedIcon>>> =
+    LazyLock::new(OnceMap::new);
+
+// This is just Option, but with variants named for their meaning.
+enum RenderedIcon {
+    Ok(Pixels),
+    Failed,
+}
 
 #[derive(Debug, Clone)]
 pub struct DesktopEntry {
@@ -16,11 +30,6 @@ pub struct DesktopEntry {
     pub path: PathBuf,
     pub exec: String,
     pub icon: Option<String>,
-    pub icon_resolved: OnceLock<slint::SharedPixelBuffer<Rgba8Pixel>>,
-}
-
-struct IconWorker {
-    sender: smol::channel::Sender<Arc<DesktopEntry>>,
 }
 
 fn next_id() -> EntryId {
@@ -46,9 +55,6 @@ pub fn scour_desktop_entries(sender: AppSender<Message>, history: &LaunchHistory
         let mut rows = DESKTOP_ENTRIES.lock().unwrap();
         let mut new_entries = 0u32;
 
-        // TODO: dropping this will cancel the work task
-        let mut icon_worker: Option<IconWorker> = None;
-
         for entry in entries {
             let Some(exec) = entry.exec else {
                 continue;
@@ -70,24 +76,7 @@ pub fn scour_desktop_entries(sender: AppSender<Message>, history: &LaunchHistory
                     path: entry.source_path,
                     exec,
                     icon: entry.icon,
-                    icon_resolved: OnceLock::new(),
                 });
-
-                // try locating the icon for this desktop entry, if any, and which may have to be deferred:
-                // let worker = icon_worker.get_or_insert_with(|| {
-                //     let (sender, receiver) = smol::channel::unbounded();
-                //     let task = smol::unblock(move || -> Option<()> {
-                //         loop {
-                //             let entry = receiver.recv_blocking().ok()?;
-
-                find_and_set_icon(&desktop_entry);
-                // }
-                // });
-                //
-                // IconWorker { sender, task }
-                // });
-
-                // let _ = worker.sender.send_blocking(launcher_entry.clone());
 
                 // let bonus_score = history.get(&launcher_entry.path).cloned().unwrap_or(0);
 
@@ -107,33 +96,48 @@ pub fn scour_desktop_entries(sender: AppSender<Message>, history: &LaunchHistory
     }
 }
 
-fn find_and_set_icon(desktop_entry: &Arc<DesktopEntry>) {
-    let desktop_entry = desktop_entry.clone();
+pub fn is_icon_cached(icon: &str) -> bool {
+    ICONS_RENDERED.get(icon).is_some()
+}
 
-    let Some(icon) = &desktop_entry.icon else {
-        return;
-    };
+/// Try loading an icon, given its path. This function blocks on I/O.
+pub fn load_icon(icon: &str) -> Option<Pixels> {
+    if let Some(cached) = ICONS_RENDERED.get(icon) {
+        return match cached {
+            RenderedIcon::Ok(pixels) => Some(pixels.clone()),
+            RenderedIcon::Failed => None,
+        };
+    }
 
     // if `Icon` is an absolute path, the image pointed at should be loaded:
     let path = if icon.starts_with('/') && std::fs::exists(icon).unwrap_or(false) {
         icon.to_string()
     } else {
-        let icon = icon.to_string();
-        let icon = ICONS.find_icon(icon.as_str(), 32, 1, "Adwaita"); // TODO: find user icon theme
+        let icon_string = icon.to_string();
+        let icon = ICONS.find_icon(icon_string.as_str(), 32, 1, "Adwaita"); // TODO: find user icon theme
 
         if let Some(icon) = icon {
             let path = icon.path.to_string_lossy().to_string();
 
             path
         } else {
-            return;
+            // insert a failed entry into the cache,
+            // so that any successive fetches for this icon immediately fail
+            ICONS_RENDERED.insert(icon_string, |_| Box::new(RenderedIcon::Failed));
+            return None;
         }
     };
 
+    let icon = icon.to_string();
     if let Ok(image) = slint::Image::load_from_path(path.as_str().as_ref()) {
         let buffer = image.to_rgba8().unwrap(); // TODO: unwrap?
 
-        let DesktopEntry { icon_resolved, .. } = desktop_entry.as_ref();
-        let _ = icon_resolved.set(buffer);
+        ICONS_RENDERED.insert(icon, |_| Box::new(RenderedIcon::Ok(buffer.clone())));
+
+        Some(buffer)
+    } else {
+        ICONS_RENDERED.insert(icon, |_| Box::new(RenderedIcon::Failed));
+
+        None
     }
 }

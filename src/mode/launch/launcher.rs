@@ -19,6 +19,7 @@ pub enum Message {
     QuerySet(String),
     Launch(EntryId),
     NewEntry(EntryId, Arc<DesktopEntry>),
+    UpdateIcon(EntryId, Pixels),
     SearchUpdated,
 }
 
@@ -141,6 +142,19 @@ impl App for Launcher {
                     self.sender.finish();
                 }
             }
+            Message::NewEntry(id, entry) => {
+                self.search.push(SearchEntry {
+                    for_id: id,
+                    text: entry.name.clone(),
+                });
+                self.entries
+                    .insert(id, self.launcher_entry_for_desktop(id, entry));
+            }
+            Message::UpdateIcon(id, icon) => {
+                self.entries.mutate_by_key(&id, |_, _, v| {
+                    v.icon = Some(icon);
+                });
+            }
             Message::SearchUpdated => {
                 self.search.tick();
 
@@ -156,25 +170,48 @@ impl App for Launcher {
                     v.shown = shown;
                 });
             }
-            Message::NewEntry(id, entry) => {
-                self.search.push(SearchEntry {
-                    for_id: id,
-                    text: entry.name.clone(),
-                });
-                self.entries.insert(
-                    id,
-                    LauncherEntry {
-                        id,
-                        shown: true,
-                        desktop: entry,
-                    },
-                );
-            }
         }
     }
 
     fn stop(self) -> Self::Output {
         JsonAppResult(())
+    }
+}
+
+impl Launcher {
+    fn launcher_entry_for_desktop(&self, id: EntryId, entry: Arc<DesktopEntry>) -> LauncherEntry {
+        // Icon loading is offloaded and cached.
+        // if we've already got an icon for this entry, or it has failed before,
+        // we don't try again:
+        let icon = if let Some(icon_path) = entry.icon.as_deref() {
+            if is_icon_cached(icon_path) {
+                // great! load_icon won't block:
+                load_icon(icon_path)
+            } else {
+                // no cache hit -> we'll have to offload this, and update it later.
+                let icon_path = icon_path.to_string();
+                let sender = self.sender.clone();
+                let offloaded_task = smol::unblock(move || load_icon(&icon_path));
+
+                drop(slint::spawn_local(async move {
+                    let icon = offloaded_task.await;
+                    if let Some(icon) = icon {
+                        sender.send(Message::UpdateIcon(id, icon));
+                    }
+                }));
+
+                None
+            }
+        } else {
+            None // no icon_path, no icon.
+        };
+
+        LauncherEntry {
+            id,
+            shown: true,
+            desktop: entry,
+            icon,
+        }
     }
 }
 
@@ -201,25 +238,22 @@ pub struct LauncherEntry {
     shown: bool,
     /// The desktop entry this corresponds with
     desktop: Arc<DesktopEntry>,
+    /// This entry's rendered icon
+    icon: Option<Pixels>,
 }
 
 impl LauncherEntry {
     pub fn to_slint(&self) -> ui::LauncherEntry {
-        let DesktopEntry {
-            icon_resolved,
-            name,
-            ..
-        } = self.desktop.as_ref();
-
-        let icon = icon_resolved
-            .get()
+        let icon = self
+            .icon
+            .as_ref()
             .map(|buffer| slint::Image::from_rgba8(buffer.clone()))
             .unwrap_or_default();
 
         ui::LauncherEntry {
             icon,
             id: self.id.0 as i32,
-            name: name.clone(),
+            name: self.desktop.name.clone(),
         }
     }
 }

@@ -48,7 +48,7 @@ fn main() -> anyhow::Result<()> {
 
             match smol::block_on(run_client(args, client)) {
                 Ok(result) => log::info!("finished running, exited with result '{result:?}'"),
-                Err(e) => log::error!("client failed to run: {e}")
+                Err(e) => log::error!("client failed to run: {e}"),
             };
 
             Ok(())
@@ -118,7 +118,7 @@ pub fn run_standalone() -> anyhow::Result<()> {
                 Ok(Some(result)) => {
                     let result = result.to_json();
                     log::info!("finished running, exited with result '{result:?}'")
-                },
+                }
                 Ok(None) => log::error!("finished running, but could not get app result"),
                 Err(e) => log::error!("finished running with error {e}"),
             };
