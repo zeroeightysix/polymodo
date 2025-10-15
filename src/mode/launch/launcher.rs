@@ -10,7 +10,6 @@ use std::io::Write;
 use std::os::unix::prelude::CommandExt;
 use std::process::Command;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 pub(super) type LauncherEntriesModel = Rc<IndexModel<EntryId, LauncherEntry>>;
@@ -19,7 +18,7 @@ pub(super) type LauncherEntriesModel = Rc<IndexModel<EntryId, LauncherEntry>>;
 pub enum Message {
     QuerySet(String),
     Launch(EntryId),
-    NewEntry(Arc<DesktopEntry>),
+    NewEntry(EntryId, Arc<DesktopEntry>),
     SearchUpdated,
 }
 
@@ -68,17 +67,11 @@ impl App for Launcher {
             config
         });
 
-        let pusher = {
-            let sender = message_sender.clone();
-
-            move |entry: Arc<DesktopEntry>| sender.send(Message::NewEntry(entry))
-        };
-
         {
             // TODO: avoid clone, bias should go through FuzzySearch instead
             let bias = bias.history.clone();
-            let _ = std::thread::spawn(move || scour_desktop_entries(pusher, &bias));
-            // let _ = std::thread::spawn(move || );
+            let message_sender = message_sender.clone();
+            let _ = std::thread::spawn(move || scour_desktop_entries(message_sender, &bias));
         }
 
         {
@@ -163,12 +156,7 @@ impl App for Launcher {
                     v.shown = shown;
                 });
             }
-            Message::NewEntry(entry) => {
-                static IDX: AtomicUsize = AtomicUsize::new(0);
-
-                let idx = IDX.fetch_add(1, Ordering::Relaxed);
-                let id = EntryId(idx);
-
+            Message::NewEntry(id, entry) => {
                 self.search.push(SearchEntry {
                     for_id: id,
                     text: entry.name.clone(),

@@ -2,7 +2,9 @@ use super::*;
 use slint::{Rgba8Pixel, SharedString};
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
+use crate::app::AppSender;
 
 static DESKTOP_ENTRIES: Mutex<Vec<Arc<DesktopEntry>>> = Mutex::new(Vec::new());
 
@@ -21,12 +23,18 @@ struct IconWorker {
     sender: smol::channel::Sender<Arc<DesktopEntry>>,
 }
 
-pub fn scour_desktop_entries(pusher: impl Fn(Arc<DesktopEntry>), history: &LaunchHistory) {
+fn next_id() -> EntryId {
+    static IDX: AtomicUsize = AtomicUsize::new(0);
+    let idx = IDX.fetch_add(1, Ordering::Relaxed);
+    EntryId(idx)
+}
+
+pub fn scour_desktop_entries(sender: AppSender<Message>, history: &LaunchHistory) {
     // immediately push cached entries
     {
         let rows = DESKTOP_ENTRIES.lock().unwrap();
         for row in &*rows {
-            pusher(row.clone())
+            sender.send(Message::NewEntry(next_id(), row.clone()));
         }
     }
 
@@ -87,7 +95,7 @@ pub fn scour_desktop_entries(pusher: impl Fn(Arc<DesktopEntry>), history: &Launc
 
                 // and also add it to the fuzzy searcher
                 let entry = rows.last().unwrap().clone();
-                pusher(entry)
+                sender.send(Message::NewEntry(next_id(), entry));
             }
         }
 
