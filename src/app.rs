@@ -31,9 +31,6 @@ pub trait App: Sized {
 /// This serves to provide a dyn compatible trait for `AppSurfaceDriver` to use, as `App` itself
 /// has GATs that make it dyn incompatible.
 pub trait AppDriver {
-    // TODO: can we get rid of this?
-    fn key(&self) -> AppKey;
-
     fn app_name(&self) -> AppName;
 
     fn add_abortable(&mut self, abortable: AbortOnDrop);
@@ -70,10 +67,6 @@ where
     A::Message: 'static,
     A::Output: 'static + AppResult + Send,
 {
-    fn key(&self) -> AppKey {
-        self.key
-    }
-
     fn app_name(&self) -> AppName {
         A::NAME
     }
