@@ -1,6 +1,7 @@
 import { Button, VerticalBox, LineEdit, Palette, ListView, StandardListView } from "std-widgets.slint";
 import { PolymodoTextInput } from "text-input.slint";
 import { LauncherEntry, LauncherEntries, LauncherListView } from "launcher-entry.slint";
+import { Separator } from "../separator.slint";
 
 export { LauncherEntries }
 
@@ -32,7 +33,7 @@ export component LauncherWindow inherits Window {
         background: #000000cc;
 
         border-radius: 12px;
-        border-color: darkgrey;
+        border-color: #333333;
         border-width: 1px;
     }
 
@@ -73,6 +74,8 @@ export component LauncherWindow inherits Window {
                 LauncherSearch.search-edited(self.text);
             }
         }
+
+        Separator {}
 
         Rectangle {
             vertical-stretch: 1;
