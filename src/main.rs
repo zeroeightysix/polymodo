@@ -45,9 +45,13 @@ fn main() -> anyhow::Result<()> {
         Ok(client) => {
             // ok, we have a client, let's talk with the server!
             // the client is written in async code, so set up a runtime here.
-            let _ = smol::block_on(run_client(args, client));
 
-            todo!()
+            match smol::block_on(run_client(args, client)) {
+                Ok(result) => log::info!("finished running, exited with result '{result:?}'"),
+                Err(e) => log::error!("client failed to run: {e}")
+            };
+
+            Ok(())
         }
         Err(err) if err.kind() == ErrorKind::ConnectionRefused => {
             // ConnectionRefused happens when there is no one listening on the other end, i.e.

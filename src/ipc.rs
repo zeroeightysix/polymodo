@@ -31,8 +31,6 @@ pub struct AppSpawnOptions {
 #[derive(Debug, Decode, Encode)]
 pub enum ClientboundMessage {
     Pong,
-    /// Yes/no, an app with that type name is already running
-    Running(String, bool),
     AppResult(String), // TODO: apps return much prettier things than String. This could be type-safe, but requires a bit of thought.
 }
 
@@ -44,7 +42,7 @@ pub enum IpcReceiveError {
 
 pub struct IpcClient<In, Out> {
     stream: UnixStream,
-    buffer: Arc<Mutex<Vec<u8>>>,
+    backlog: Arc<Mutex<Vec<u8>>>,
     addr: SocketAddr,
     marker: std::marker::PhantomData<(In, Out)>,
 }
@@ -53,7 +51,7 @@ impl<A, B> IpcClient<A, B> {
     fn new(stream: UnixStream, addr: SocketAddr) -> Self {
         Self {
             stream,
-            buffer: Default::default(),
+            backlog: Default::default(),
             addr,
             marker: Default::default(),
         }
@@ -86,14 +84,14 @@ where
 
     pub async fn recv(&self) -> Result<In, IpcReceiveError> {
         loop {
-            let mut buffer = self.buffer.lock().await;
+            let mut backlog = self.backlog.lock().await;
 
-            match bincode::decode_from_slice(&buffer, BINCODE_CONFIG) {
+            match bincode::decode_from_slice(&backlog, BINCODE_CONFIG) {
                 Ok((message, bytes)) => {
                     // remove `bytes` bytes from our buffer
                     // as we might have already read bytes of the next message, it's essential that
                     // we keep them around for the next attempt to `recv`!
-                    drop(buffer.drain(..bytes));
+                    drop(backlog.drain(..bytes));
 
                     return Ok(message);
                 }
@@ -102,10 +100,14 @@ where
             }
 
             let mut stream = self.stream.clone();
+            let mut buf = [0; 4096];
+            let read = stream.read(&mut buf).await?;
 
-            if stream.read(&mut buffer).await? == 0 {
+            if read == 0 {
                 let err: std::io::Error = std::io::ErrorKind::BrokenPipe.into();
                 return Err(err.into());
+            } else {
+                backlog.extend_from_slice(&buf[..read]);
             }
         }
     }
@@ -115,7 +117,7 @@ impl<A, B> Clone for IpcClient<A, B> {
     fn clone(&self) -> Self {
         Self {
             stream: self.stream.clone(),
-            buffer: Arc::clone(&self.buffer),
+            backlog: Arc::clone(&self.backlog),
             addr: self.addr.clone(),
             marker: Default::default(),
         }
