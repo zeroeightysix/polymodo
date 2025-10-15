@@ -1,5 +1,5 @@
 use super::*;
-use slint::Rgba8Pixel;
+use slint::{Rgba8Pixel, SharedString};
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Instant;
@@ -10,7 +10,7 @@ static ICONS: LazyLock<icon::Icons> = LazyLock::new(icon::Icons::new);
 
 #[derive(Debug, Clone)]
 pub struct DesktopEntry {
-    pub name: String,
+    pub name: SharedString,
     pub path: PathBuf,
     pub exec: String,
     pub icon: Option<String>,
@@ -58,7 +58,7 @@ pub fn scour_desktop_entries(pusher: impl Fn(Arc<DesktopEntry>), history: &Launc
 
                 // add a new search entry for this desktop entry.
                 let desktop_entry = Arc::new(DesktopEntry {
-                    name: entry.name,
+                    name: entry.name.into(),
                     path: entry.source_path,
                     exec,
                     icon: entry.icon,

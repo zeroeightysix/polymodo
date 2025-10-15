@@ -5,7 +5,7 @@ use crate::mode::{HideOnDrop, HideOnDropExt};
 use crate::ui;
 use crate::ui::index_model::IndexModel;
 use anyhow::anyhow;
-use slint::{ComponentHandle, ModelExt, ModelRc};
+use slint::{ComponentHandle, ModelExt, ModelRc, SharedString};
 use std::io::Write;
 use std::os::unix::prelude::CommandExt;
 use std::process::Command;
@@ -195,14 +195,14 @@ pub struct EntryId(pub usize);
 
 pub struct SearchEntry {
     for_id: EntryId,
-    text: String,
+    text: SharedString,
 }
 
 impl crate::fuzzy_search::Row<1> for SearchEntry {
-    type Output = nucleo::Utf32String;
+    type Output = String;
 
     fn columns(&self) -> [Self::Output; 1] {
-        [self.text.clone().into()]
+        [self.text.to_string()]
     }
 }
 
@@ -231,7 +231,7 @@ impl LauncherEntry {
         ui::LauncherEntry {
             icon,
             id: self.id.0 as i32,
-            name: name.into(),
+            name: name.clone(),
         }
     }
 }
