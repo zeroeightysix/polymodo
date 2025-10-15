@@ -175,7 +175,7 @@ impl PolymodoHandle {
 
         // Create the app and its driver (wrapper)
         let app = A::create(app_sender);
-        let driver = app::driver_for(key, app);
+        let driver = app::driver_for(app);
 
         // Add it to the list
         let mut apps = handle.apps.borrow_mut();

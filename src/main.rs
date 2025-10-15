@@ -112,9 +112,16 @@ pub fn run_standalone() -> anyhow::Result<()> {
         let app = poly.spawn_app::<Launcher>().expect("Failed to spawn app");
 
         slint::spawn_local(async move {
-            let result = poly.wait_for_app_stop(app);
+            let result = poly.wait_for_app_stop(app).await;
 
-            let result1 = result.await;
+            match result {
+                Ok(Some(result)) => {
+                    let result = result.to_json();
+                    log::info!("finished running, exited with result '{result:?}'")
+                },
+                Ok(None) => log::error!("finished running, but could not get app result"),
+                Err(e) => log::error!("finished running with error {e}"),
+            };
 
             slint::quit_event_loop().expect("failed to quit");
         })

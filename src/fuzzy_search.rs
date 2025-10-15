@@ -128,6 +128,7 @@ where
     /// Returns a function that may be called to push items into the fuzzy matcher.
     /// This exists as a simple handle that can be given to an async task, instead of
     /// requiring shared ownership of the [FuzzySearch]
+    #[expect(unused)]
     pub fn pusher(&self) -> impl Fn(D) + Send + Sync {
         let injector = self.injector.clone();
         move |entry: D| {

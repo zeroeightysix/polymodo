@@ -8,6 +8,7 @@ pub struct LauncherEntryBiasState {
     pub history: LaunchHistory,
 }
 
+#[expect(unused)]
 pub fn bump_history_value(value: u32) -> u32 {
     const ALPHA: f32 = 0.5f32;
     const INV_ALPHA: f32 = 1f32 - ALPHA;
@@ -16,6 +17,7 @@ pub fn bump_history_value(value: u32) -> u32 {
     (ALPHA * increment as f32 + INV_ALPHA * value as f32) as u32
 }
 
+#[expect(unused)]
 pub fn decrement_history_value(value: u32) -> u32 {
     const ALPHA: f32 = 0.1f32;
     const INV_ALPHA: f32 = 1f32 - ALPHA;

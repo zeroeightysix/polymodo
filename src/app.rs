@@ -46,15 +46,13 @@ pub trait AppDriver {
 }
 
 struct AppDriverImpl<A> {
-    key: AppKey,
     app: Option<A>,
     abortables: Vec<AbortOnDrop>,
 }
 
 impl<A> AppDriverImpl<A> {
-    pub fn new(key: AppKey, app: A) -> Self {
+    pub fn new(app: A) -> Self {
         Self {
-            key,
             app: Some(app),
             abortables: Vec::new(),
         }
@@ -93,13 +91,13 @@ where
     }
 }
 
-pub fn driver_for<A>(key: AppKey, app: A) -> impl AppDriver
+pub fn driver_for<A>(app: A) -> impl AppDriver
 where
     A: App + 'static,
     A::Message: 'static,
     A::Output: 'static + AppResult + Send,
 {
-    AppDriverImpl::new(key, app)
+    AppDriverImpl::new(app)
 }
 
 /// The sender end of a channel for apps to send messages to themselves.

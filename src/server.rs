@@ -83,8 +83,9 @@ async fn serve_client(polymodo: PolymodoHandle, client: IpcS2C) {
                     format!("{e}")
                 });
 
-                // TODO: handle
-                client.send(ClientboundMessage::AppResult(result)).await;
+                if let Err(e) = client.send(ClientboundMessage::AppResult(result)).await {
+                    log::error!("failed to send result to client: {e}")
+                }
 
                 Ok(())
             }

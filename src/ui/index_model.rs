@@ -18,6 +18,7 @@ impl<K, V> Default for IndexModel<K, V> {
     }
 }
 
+#[allow(unused)]
 impl<K, V> IndexModel<K, V> {
     pub fn mutate_row<R>(&self, row: usize, fun: impl FnOnce(&K, &mut V) -> R) -> Option<R> {
         let mut map = self.map.borrow_mut();
@@ -66,6 +67,7 @@ impl<K: Clone, V> IndexModel<K, V> {
 }
 
 impl<K: Clone, V: Clone> IndexModel<K, V> {
+    #[expect(unused)]
     fn get_row_key_value(&self, row: usize) -> Option<(K, V)> {
         self.map
             .borrow()
@@ -79,6 +81,7 @@ impl<K: Hash + Eq, V> IndexModel<K, V> {
         self.map.borrow_mut().insert(key, value);
     }
 
+    #[expect(unused)]
     pub fn get_row_of_key<Q>(&self, key: &Q) -> Option<usize>
     where
         Q: ?Sized + Hash + indexmap::Equivalent<K>,

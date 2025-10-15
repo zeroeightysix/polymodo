@@ -142,8 +142,9 @@ impl App for Launcher {
                 if let Some(LauncherEntry { desktop, .. }) =
                     self.entries.get_value_of_key(&entry_id)
                 {
-                    // TODO: handle?
-                    let result = launch(desktop.as_ref());
+                    if let Err(e) = launch(desktop.as_ref()) {
+                        log::error!("failed to launch: {e}")
+                    }
                     self.sender.finish();
                 }
             }
