@@ -1,13 +1,12 @@
 use crate::app;
-use crate::app::{AppEvent, AppMessage, AppSender};
+use crate::app::{AppEvent, AppMessage, AppResult, AppSender};
 use slint::JoinHandle;
-use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::rc::Rc;
 
-type FinishSender = oneshot::Sender<Option<Box<dyn Any + Send>>>;
+type FinishSender = oneshot::Sender<Option<Box<dyn AppResult + Send>>>;
 
 pub struct Polymodo {
     apps: RefCell<HashMap<app::AppKey, Box<dyn app::AppDriver>>>,
@@ -32,7 +31,7 @@ impl Polymodo {
     pub async fn wait_for_app_stop(
         &self,
         app_key: app::AppKey,
-    ) -> anyhow::Result<Option<Box<dyn Any + Send>>> {
+    ) -> anyhow::Result<Option<Box<dyn AppResult + Send>>> {
         // set up the channel of a "finish sender" stored in Polymodo:
         let (sender, receiver) = oneshot::channel();
 
@@ -54,7 +53,7 @@ impl Polymodo {
     }
 
     /// Stop an app. Returns its output value, boxed as any.
-    async fn stop_app(&self, app: app::AppKey) -> Result<Box<dyn Any + Send>, PolymodoError> {
+    async fn stop_app(&self, app: app::AppKey) -> Result<Box<dyn AppResult + Send>, PolymodoError> {
         let mut app = self
             .apps
             .borrow_mut()
@@ -166,7 +165,7 @@ impl PolymodoHandle {
     where
         A: app::App + 'static,
         A::Message: Send + 'static,
-        A::Output: Send,
+        A::Output: AppResult + Send,
     {
         // create a new key for this app.
         // (it's just a number)

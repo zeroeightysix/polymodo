@@ -2,6 +2,12 @@ use crate::ipc::{AppSpawnOptions, ClientboundMessage, IpcS2C, IpcServer, Serverb
 use crate::mode::launch::Launcher;
 use crate::polymodo::{Polymodo, PolymodoHandle};
 
+#[derive(Debug, derive_more::Error, derive_more::Display, derive_more::From)]
+enum ServerError {
+    #[display("the server could not retrieve the app's result")]
+    FailedToGetResult,
+}
+
 pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
     crate::setup_slint_backend();
 
@@ -17,7 +23,7 @@ pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
         let key = poly.spawn_app::<Launcher>().expect("failed to spawn app");
         log::info!("spawned launcher with key {key}");
     })
-    .expect("an event loop");
+        .expect("an event loop");
 
     slint::run_event_loop_until_quit()?;
 
@@ -64,13 +70,21 @@ async fn serve_client(polymodo: PolymodoHandle, client: IpcS2C) {
 
                 let app_key = polymodo
                     .spawn_app::<Launcher>()
-                    .expect("failed to spawn app");
+                    .expect("failed to spawn app"); // todo: no expect
                 let app_result = polymodo
                     .wait_for_app_stop(app_key)
                     .await
-                    .expect("sender closed");
+                    .expect("sender closed"); // todo: no expect
 
-                // TODO: what to do with this result?
+                let result: anyhow::Result<_> = app_result.ok_or(ServerError::FailedToGetResult.into())
+                    .and_then(|result| result.to_json());
+
+                let result = result.unwrap_or_else(|e| {
+                    format!("{e}")
+                });
+
+                // TODO: handle
+                client.send(ClientboundMessage::AppResult(result)).await;
 
                 Ok(())
             }

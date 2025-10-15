@@ -1,5 +1,5 @@
 use super::entry::*;
-use crate::app::{App, AppName, AppSender};
+use crate::app::{App, AppName, AppSender, JsonAppResult};
 use crate::fuzzy_search::FuzzySearch;
 use crate::mode::{HideOnDrop, HideOnDropExt};
 use crate::ui;
@@ -33,7 +33,7 @@ pub struct Launcher {
 
 impl App for Launcher {
     type Message = Message;
-    type Output = anyhow::Result<()>;
+    type Output = JsonAppResult<()>;
 
     const NAME: AppName = AppName::Launcher;
 
@@ -185,7 +185,7 @@ impl App for Launcher {
     }
 
     fn stop(self) -> Self::Output {
-        Ok(())
+        JsonAppResult(())
     }
 }
 

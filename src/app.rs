@@ -45,7 +45,7 @@ pub trait AppDriver {
     /// accepting `self` (instead of a reference) cannot be called.
     ///
     /// Panics if called twice.
-    fn stop(&mut self) -> Box<dyn std::any::Any + Send>;
+    fn stop(&mut self) -> Box<dyn AppResult + Send>;
 }
 
 struct AppDriverImpl<A> {
@@ -68,7 +68,7 @@ impl<A: App> AppDriver for AppDriverImpl<A>
 where
     A: 'static,
     A::Message: 'static,
-    A::Output: 'static + Send,
+    A::Output: 'static + AppResult + Send,
 {
     fn key(&self) -> AppKey {
         self.key
@@ -93,7 +93,7 @@ where
             .on_message(*message);
     }
 
-    fn stop(&mut self) -> Box<dyn std::any::Any + Send> {
+    fn stop(&mut self) -> Box<dyn AppResult + Send> {
         let app = self.app.take().expect("app has been already been stopped");
 
         Box::new(app.stop())
@@ -104,7 +104,7 @@ pub fn driver_for<A>(key: AppKey, app: A) -> impl AppDriver
 where
     A: App + 'static,
     A::Message: 'static,
-    A::Output: 'static + Send,
+    A::Output: 'static + AppResult + Send,
 {
     AppDriverImpl::new(key, app)
 }
@@ -214,4 +214,19 @@ impl Drop for AbortOnDrop {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Decode, Encode)]
 pub enum AppName {
     Launcher,
+}
+
+pub trait AppResult {
+    fn to_json(&self) -> anyhow::Result<String>;
+}
+
+#[derive(serde::Serialize)]
+pub struct JsonAppResult<T>(pub T);
+
+impl<T: serde::Serialize> AppResult for JsonAppResult<T> {
+    fn to_json(&self) -> anyhow::Result<String> {
+        let json = serde_json::to_string(&self.0)?;
+
+        Ok(json)
+    }
 }
