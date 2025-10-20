@@ -27,6 +27,8 @@ enum RenderedIcon {
 #[derive(Debug, Clone)]
 pub struct DesktopEntry {
     pub name: SharedString,
+    pub generic_name: Option<SharedString>,
+    pub description: Option<SharedString>,
     pub path: PathBuf,
     pub exec: String,
     pub icon: Option<String>,
@@ -73,6 +75,8 @@ pub fn scour_desktop_entries(sender: AppSender<Message>) {
                 // add a new search entry for this desktop entry.
                 let desktop_entry = Arc::new(DesktopEntry {
                     name: entry.name.into(),
+                    generic_name: entry.generic_name.clone().map(Into::into),
+                    description: entry.comment.clone().map(Into::into),
                     path: entry.source_path,
                     exec,
                     icon: entry.icon,

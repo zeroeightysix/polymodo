@@ -10,7 +10,7 @@ export global LauncherSearch {
 }
 
 export component LauncherWindow inherits Window {
-    in property <length> font-size: 18px;
+    in property <length> font-size: 16px;
 
     callback escape-pressed();
     callback launch(/*id*/ int);
@@ -79,6 +79,7 @@ export component LauncherWindow inherits Window {
             list_view := LauncherListView {
                 model: LauncherEntries.entries;
                 current-item: 0;
+                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
 
                 if LauncherEntries.entries.length == 0: Text {
                     text: "No results";

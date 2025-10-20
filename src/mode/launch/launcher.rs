@@ -275,9 +275,11 @@ impl LauncherEntry {
             .unwrap_or_default();
 
         ui::LauncherEntry {
+            name: self.desktop.name.clone(),
+            generic_name: self.desktop.generic_name.clone().unwrap_or_default(),
+            description: self.desktop.description.clone().unwrap_or_default(),
             icon,
             id: self.id.0 as i32,
-            name: self.desktop.name.clone(),
         }
     }
 }

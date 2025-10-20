@@ -1,18 +1,26 @@
-import { HorizontalBox, VerticalBox, ListView } from "std-widgets.slint";
+import { HorizontalBox, VerticalBox, ListView, Palette } from "std-widgets.slint";
 
 export struct LauncherEntry {
     icon: image,
     name: string,
+    generic_name: string,
+    description: string,
     id: int,
 }
 
 export global LauncherEntries {
-    in-out property <[LauncherEntry]> entries: [{ name:"Test entry" }];
+    in-out property <[LauncherEntry]> entries: [
+        {
+            name: "Blender",
+            icon: @image-url("/usr/share/pixmaps/archlinux-logo.svg"),
+            generic_name: "3D ",
+            description: "This certainly isn't an ad!"
+        }
+    ];
 }
 
 export component LauncherEntryDelegate inherits Rectangle {
-    in property <image> icon: @image-url("/usr/share/pixmaps/archlinux-logo.svg");
-    in property <string> name: "Arch linux";
+    in property <LauncherEntry> entry;
     in property <bool> selected;
 
     background: self.selected ? white.transparentize(90%) : transparent;
@@ -27,21 +35,38 @@ export component LauncherEntryDelegate inherits Rectangle {
             horizontal-alignment: ImageHorizontalAlignment.left;
             horizontal-tiling: ImageTiling.none;
             image-fit: ImageFit.contain;
-            source: icon;
+            source: entry.icon;
         }
 
-        // Slint's center text alignment appears to align on the baseline,
-        // so we push it down ever so slightly.
-        VerticalBox {
-            alignment: LayoutAlignment.center;
-            padding: 0px;
-            padding-top: 0.2rem;
-            spacing: 0px;
+        VerticalLayout {
+            alignment: center;
+            // Slint's center text alignment appears to align on the baseline,
+            // so we push it down ever so slightly.
+            padding-top: entry.description == "" ? 2px : 0px;
+            
+            HorizontalLayout {
+                alignment: start;
 
-            Text {
-                text: name;
-                vertical-alignment: TextVerticalAlignment.center;
-                font-size: 18px;
+                Text {
+                    text: entry.name;
+                    vertical-alignment: center;
+                    overflow: clip;
+                }
+
+                if entry.generic-name != "": Text {
+                    text: " (\{entry.generic-name})";
+                    vertical-alignment: center;
+                    font-italic: true;
+                    font-size: 0.7rem;
+                    overflow: clip;
+                }
+            }
+
+            if entry.description != "": Text {
+                text: entry.description;
+                font-size: 0.7rem;
+                color: Palette.foreground.darker(1);
+                overflow: elide;
             }
         }
     }
@@ -177,8 +202,7 @@ component StandardListViewBase inherits ListView {
         selected: index == root.current-item;
 //        has-focus: root.has-focus && index == root.focus-item;
 //        has-hover: i-touch-area.has-hover;
-        icon: item.icon;
-        name: item.name;
+        entry: item;
 
         i-touch-area := TouchArea {
             clicked => {
