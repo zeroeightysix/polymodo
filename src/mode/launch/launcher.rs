@@ -6,6 +6,7 @@ use crate::ui;
 use crate::ui::index_model::IndexModel;
 use anyhow::anyhow;
 use slint::{ComponentHandle, ModelExt, ModelRc, SharedString};
+use std::cmp::Ordering;
 use std::io::Write;
 use std::os::unix::prelude::CommandExt;
 use std::process::Command;
@@ -40,10 +41,9 @@ impl App for Launcher {
 
     fn create(message_sender: AppSender<Self::Message>) -> Self {
         // read the bias from persistent state, if any.
-        let bias: super::LaunchHistory =
-            crate::persistence::read_state("launcher", "entry_bias")
-                .ok()
-                .unwrap_or_default();
+        let bias: super::LaunchHistory = crate::persistence::read_state("launcher", "entry_bias")
+            .ok()
+            .unwrap_or_default();
 
         let main_window: HideOnDrop<ui::LauncherWindow> =
             ui::LauncherWindow::new().unwrap().hide_on_drop();
@@ -59,10 +59,13 @@ impl App for Launcher {
                 .clone()
                 .filter(|entry| entry.shown)
                 .sort_by(move |a, b| {
-                    let a = bias.score(a.desktop.path.as_path());
-                    let b = bias.score(b.desktop.path.as_path());
+                    let a_bias = bias.score(a.desktop.path.as_path());
+                    let b_bias = bias.score(b.desktop.path.as_path());
 
-                    a.total_cmp(&b)
+                    (a_bias, a.score)
+                        .partial_cmp(&(b_bias, b.score))
+                        .unwrap_or(Ordering::Equal)
+                        // .reverse()
                 })
                 .reverse()
                 .map(|entry| entry.to_slint());
@@ -146,7 +149,9 @@ impl App for Launcher {
                     self.entries.get_value_of_key(&entry_id)
                 {
                     self.bias.increment_and_decay(desktop.path.clone());
-                    if let Err(e) = crate::persistence::write_state("launcher", "entry_bias", &self.bias) {
+                    if let Err(e) =
+                        crate::persistence::write_state("launcher", "entry_bias", &self.bias)
+                    {
                         log::error!("couldn't write launcher bias (scoring): {e}");
                     }
 
@@ -180,8 +185,10 @@ impl App for Launcher {
                     .collect();
 
                 self.entries.mutate_all(|_, entry_id, v| {
-                    let shown = matches.contains(entry_id);
-                    v.shown = shown;
+                    let position = matches.iter().position(|x| x == entry_id)
+                        .map(|pos| matches.len() - pos);
+                    v.shown = position.is_some();
+                    v.score = position.unwrap_or_default() as u32;
                 });
             }
         }
@@ -223,6 +230,7 @@ impl Launcher {
         LauncherEntry {
             id,
             shown: true,
+            score: 0,
             desktop: entry,
             icon,
         }
@@ -250,6 +258,8 @@ pub struct LauncherEntry {
     id: EntryId,
     /// Whether this entry should be shown in the UI
     shown: bool,
+    /// The score this entry got from the fuzzy matcher
+    score: u32,
     /// The desktop entry this corresponds with
     desktop: Arc<DesktopEntry>,
     /// This entry's rendered icon
