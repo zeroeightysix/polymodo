@@ -49,13 +49,7 @@ export component LauncherWindow inherits Window {
             }
 
             key-pressed(event) => {
-                if (event.text == Key.DownArrow) {
-                    list_view.set-current-item-next();
-                    return accept;
-                } else if (event.text == Key.UpArrow) {
-                    list_view.set-current-item-previous();
-                    return accept;
-                } else if (event.text == Key.Escape) {
+                if (event.text == Key.Escape) {
                     escape-pressed();
                     return accept;
                 } else if (event.text == Key.Return) {
@@ -65,6 +59,8 @@ export component LauncherWindow inherits Window {
                     }
 
                     return accept;
+                } else {
+                    return list_view.key-pressed(event);
                 }
 
                 reject

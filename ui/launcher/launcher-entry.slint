@@ -198,6 +198,10 @@ component StandardListViewBase inherits ListView {
 export component LauncherListView inherits StandardListViewBase {
     forward-focus: i-focus-scope;
 
+    public function key-pressed(event: KeyEvent) -> EventResult {
+        return i-focus-scope.key-pressed(event);
+    }
+
     i-focus-scope := FocusScope {
         x: 0;
         width: 0;  // Do not react on clicks
