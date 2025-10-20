@@ -17,10 +17,6 @@ pub trait Row<const C: usize> {
     type Output;
 
     fn columns(&self) -> [Self::Output; C];
-
-    fn bonus(&self) -> u32 {
-        0 // no bonus by default.
-    }
 }
 
 impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
@@ -52,10 +48,9 @@ impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
     pub fn get_matches(&self) -> Vec<&D> {
         let snapshot = self.nucleo.snapshot();
         let matched = snapshot
-            .matches()
-            .iter()
-            .filter(|m| m.idx != u32::MAX) // I don't know why this would occasionally happen, but it would panic.
-            .filter_map(|m| snapshot.get_item(m.idx))
+            .matched_items(..)
+            // .filter(|m| m.idx != u32::MAX) // I don't know why this would occasionally happen, but it would panic.
+            // .filter_map(|m| snapshot.get_item(m.idx))
             .map(|item| item.data)
             .collect();
 
@@ -83,10 +78,6 @@ where
     D: Row<C>,
     D::Output: Into<nucleo::Utf32String>,
 {
-    fn score_tail(score: u32, entry: &D) -> u32 {
-        score + entry.bonus()
-    }
-
     /// Create a new [FuzzySearch] with the provided nucleo configuration
     pub fn create_with_config(config: nucleo::Config) -> Self {
         let notify = crate::notify::Notify::new();
@@ -94,7 +85,6 @@ where
             let notify = notify.clone();
             nucleo::Nucleo::new(
                 config,
-                std::sync::Arc::new(Self::score_tail),
                 std::sync::Arc::new(move || notify.notify()),
                 None,
                 C as u32,

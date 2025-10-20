@@ -34,7 +34,7 @@ walkdir = "2.5.0"
 icon = "0.1.2"
 smol = "2.0.2"
 oneshot = "0.1.11"
-nucleo = { git = "https://github.com/ToxicMushroom/nucleo.git", rev = "9b1a0eb" }
+nucleo = "0.5.0"
 serde_json = "1.0.145"
 serde = { version = "1.0.228", features = ["derive"] }
 once_map = "0.4.23"

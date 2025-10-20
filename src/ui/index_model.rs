@@ -61,6 +61,7 @@ impl<K, V> IndexModel<K, V> {
 }
 
 impl<K: Clone, V> IndexModel<K, V> {
+    #[expect(unused)]
     fn get_row_key(&self, row: usize) -> Option<K> {
         self.map.borrow().get_index(row).map(|(k, _v)| k).cloned()
     }

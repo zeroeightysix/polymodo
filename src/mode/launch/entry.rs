@@ -38,7 +38,7 @@ fn next_id() -> EntryId {
     EntryId(idx)
 }
 
-pub fn scour_desktop_entries(sender: AppSender<Message>, history: &LaunchHistory) {
+pub fn scour_desktop_entries(sender: AppSender<Message>) {
     // immediately push cached entries
     {
         let rows = DESKTOP_ENTRIES.lock().unwrap();

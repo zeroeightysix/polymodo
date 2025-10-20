@@ -29,6 +29,7 @@ pub struct Launcher {
     main_window: HideOnDrop<ui::LauncherWindow>,
     sender: AppSender<Message>,
     search: FuzzySearch<1, SearchEntry>,
+    bias: super::LaunchHistory,
 }
 
 impl App for Launcher {
@@ -39,7 +40,7 @@ impl App for Launcher {
 
     fn create(message_sender: AppSender<Self::Message>) -> Self {
         // read the bias from persistent state, if any.
-        let bias: super::LauncherEntryBiasState =
+        let bias: super::LaunchHistory =
             crate::persistence::read_state("launcher", "entry_bias")
                 .ok()
                 .unwrap_or_default();
@@ -50,11 +51,20 @@ impl App for Launcher {
         let model: LauncherEntriesModel = Default::default();
 
         {
+            let bias = bias.clone();
+
             // The model passed to the UI is filtered on the `shown` property on LauncherEntryUi,
             // converted to the slint struct that represents each entry.
             let model = model
                 .clone()
                 .filter(|entry| entry.shown)
+                .sort_by(move |a, b| {
+                    let a = bias.score(a.desktop.path.as_path());
+                    let b = bias.score(b.desktop.path.as_path());
+
+                    a.total_cmp(&b)
+                })
+                .reverse()
                 .map(|entry| entry.to_slint());
 
             main_window
@@ -69,10 +79,8 @@ impl App for Launcher {
         });
 
         {
-            // TODO: avoid clone, bias should go through FuzzySearch instead
-            let bias = bias.history.clone();
             let message_sender = message_sender.clone();
-            let _ = std::thread::spawn(move || scour_desktop_entries(message_sender, &bias));
+            let _ = std::thread::spawn(move || scour_desktop_entries(message_sender));
         }
 
         {
@@ -121,6 +129,7 @@ impl App for Launcher {
 
         Launcher {
             entries: model,
+            bias,
             search,
             main_window,
             sender: message_sender,
@@ -136,6 +145,11 @@ impl App for Launcher {
                 if let Some(LauncherEntry { desktop, .. }) =
                     self.entries.get_value_of_key(&entry_id)
                 {
+                    self.bias.increment_and_decay(desktop.path.clone());
+                    if let Err(e) = crate::persistence::write_state("launcher", "entry_bias", &self.bias) {
+                        log::error!("couldn't write launcher bias (scoring): {e}");
+                    }
+
                     if let Err(e) = launch(desktop.as_ref()) {
                         log::error!("failed to launch: {e}")
                     }
