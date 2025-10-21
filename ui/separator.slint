@@ -1,0 +1,15 @@
+export component Separator inherits Path {
+    height: 5px;
+    stroke: white.transparentize(80%);
+    stroke-width: 1px;
+
+    MoveTo {
+        x: 5;
+        y: 2;
+    }
+
+    LineTo {
+        x: (root.width - root.padding) / 1px;
+        y: 2;
+    }
+}

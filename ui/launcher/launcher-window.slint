@@ -1,0 +1,90 @@
+import { Button, VerticalBox, LineEdit, Palette, ListView, StandardListView } from "std-widgets.slint";
+import { PolymodoTextInput } from "text-input.slint";
+import { LauncherEntry, LauncherEntries, LauncherListView } from "launcher-entry.slint";
+import { Separator } from "../separator.slint";
+
+export { LauncherEntries }
+
+export global LauncherSearch {
+    callback search-edited(/*query*/ string);
+}
+
+export component LauncherWindow inherits Window {
+    in property <length> font-size: 16px;
+
+    callback escape-pressed();
+    callback launch(/*id*/ int);
+
+    background: transparent;
+    default-font-size: font-size;
+    no-frame: true;
+
+    title: "launcher";
+    width: 450px;
+    height: 581px;
+
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
+
+    background := Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #000000cc;
+
+        border-radius: 12px;
+        border-color: #333333;
+        border-width: 1px;
+    }
+
+    VerticalBox {
+        vertical-stretch: 1;
+        spacing: 0;
+
+        search_box := PolymodoTextInput {
+            vertical-stretch: 0;
+
+            init => {
+                self.focus-input();
+            }
+
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    escape-pressed();
+                    return accept;
+                } else if (event.text == Key.Return) {
+                    let c = list_view.current-item;
+                    if c >= 0 && c < LauncherEntries.entries.length {
+                        launch(LauncherEntries.entries[c].id);
+                    }
+
+                    return accept;
+                } else {
+                    return list_view.key-pressed(event);
+                }
+
+                reject
+            }
+
+            text-edited => {
+                LauncherSearch.search-edited(self.text);
+            }
+        }
+
+        Separator {}
+
+        Rectangle {
+            vertical-stretch: 1;
+
+            list_view := LauncherListView {
+                model: LauncherEntries.entries;
+                current-item: 0;
+                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+
+                if LauncherEntries.entries.length == 0: Text {
+                    text: "No results";
+                }
+            }
+        }
+    }
+}

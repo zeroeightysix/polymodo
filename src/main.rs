@@ -1,97 +1,57 @@
-mod app_surface_driver;
+pub mod app;
 mod cli;
 mod config;
 mod fuzzy_search;
 mod ipc;
-mod live_handle;
 mod mode;
-mod polymodo;
-mod windowing;
-mod xdg;
+mod notify;
 mod persistence;
+mod polymodo;
+mod server;
+mod ui;
+mod xdg;
 
-use crate::ipc::{AppDescription, ClientboundMessage, ServerboundMessage};
+use crate::cli::Args;
+use crate::ipc::{AppSpawnOptions, ClientboundMessage, IpcC2S, ServerboundMessage};
 use crate::mode::launch::Launcher;
+use crate::polymodo::Polymodo;
+use app::AppName;
 use clap::Parser;
+use slint::winit_030::winit::platform::wayland::{
+    KeyboardInteractivity, Layer, WindowAttributesWayland,
+};
+use slint::BackendSelector;
 use std::io::ErrorKind;
-use std::sync::OnceLock;
-use std::time::Instant;
-use tokio::task::LocalSet;
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
-static RUNTIME: OnceLock<tokio::runtime::Handle> = OnceLock::new();
-
-/// Some starting time.
-///
-/// Relative to whoever asks first.
-pub fn start_time() -> Instant {
-    static LOCK: OnceLock<Instant> = OnceLock::new();
-    *LOCK.get_or_init(Instant::now)
-}
-
-/// Returns a handle to the application's tokio runtime, to be used to spawn tasks
-/// from threads not handled by tokio.
-pub fn runtime() -> tokio::runtime::Handle {
-    RUNTIME.get().cloned().expect("the runtime wasn't set")
-}
-
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> anyhow::Result<()> {
-    setup()?;
+fn main() -> anyhow::Result<()> {
+    setup_logging()?;
 
     let args = cli::Args::parse();
 
     if args.standalone {
         log::info!("Starting standalone polymodo");
 
-        run_polymodo_standalone().await;
+        run_standalone()?;
 
         std::process::exit(0);
     }
 
     // try connecting to a running polymodo daemon.
-    match ipc::connect_to_polymodo_daemon().await {
+    match ipc::connect_to_polymodo_daemon() {
         Ok(client) => {
             // ok, we have a client, let's talk with the server!
+            // the client is written in async code, so set up a runtime here.
 
-            // did we request a single app instance?
-            if args.single {
-                client
-                    .send(ServerboundMessage::IsRunning(
-                        std::any::type_name::<Launcher>().to_string(),
-                    ))
-                    .await
-                    .expect("failed to send");
-                let message = client.recv().await.expect("failed to recv");
+            match smol::block_on(run_client(args, client)) {
+                Ok(result) => log::info!("finished running, exited with result '{result:?}'"),
+                Err(e) => log::error!("client failed to run: {e}"),
+            };
 
-                match message {
-                    ClientboundMessage::Running(name, false)
-                        if name == std::any::type_name::<Launcher>() =>
-                    {
-                        // ok!
-                    }
-                    _ => {
-                        println!("App already running!");
-                        return Ok(());
-                    }
-                }
-            }
-
-            client
-                .send(ServerboundMessage::Spawn(AppDescription::Launcher))
-                .await
-                .expect("failed to send");
-
-            println!("{:?}", client.recv().await);
-
-            client
-                .send(ServerboundMessage::Goodbye)
-                .await
-                .expect("send failed");
-            client.shutdown().await.expect("shutdown failed");
+            Ok(())
         }
         Err(err) if err.kind() == ErrorKind::ConnectionRefused => {
             // ConnectionRefused happens when there is no one listening on the other end, i.e.
@@ -99,7 +59,9 @@ async fn main() -> anyhow::Result<()> {
             // let's become that!
             log::info!("Starting polymodo daemon");
 
-            run_polymodo_daemon().await;
+            server::run_server()?;
+
+            unreachable!();
         }
         Err(e) => {
             // errors other than ConnectionRefused are considered fatal, as something other went
@@ -110,15 +72,69 @@ async fn main() -> anyhow::Result<()> {
             std::process::exit(-1);
         }
     }
+}
+
+/// Run polymodo as a client interacting with the incumbent polymodo daemon.
+///
+/// This, more or less, just sets up IPC, spawns the desired app, and waits for its result.
+async fn run_client(args: Args, client: IpcC2S) -> anyhow::Result<Option<String>> {
+    client
+        .send(ServerboundMessage::Spawn(AppSpawnOptions {
+            app_name: AppName::Launcher,
+            single: args.single,
+        }))
+        .await
+        .expect("failed to send");
+
+    let app_result = client.recv().await?;
+
+    client
+        .send(ServerboundMessage::Goodbye)
+        .await
+        .expect("send failed");
+    client.shutdown().await.expect("shutdown failed");
+
+    Ok(match app_result {
+        ClientboundMessage::AppResult(result) => Some(result),
+        _ => None,
+    })
+}
+
+/// Run polymodo without connecting to a server and without setting up IPC.
+///
+/// This function returns when the spawned app dies.
+pub fn run_standalone() -> anyhow::Result<()> {
+    setup_slint_backend();
+
+    slint::invoke_from_event_loop(|| {
+        let poly = Polymodo::new().into_handle();
+        let _run_task = poly.start_running();
+        let app = poly.spawn_app::<Launcher>().expect("Failed to spawn app");
+
+        slint::spawn_local(async move {
+            let result = poly.wait_for_app_stop(app).await;
+
+            match result {
+                Ok(Some(result)) => {
+                    let result = result.to_json();
+                    log::info!("finished running, exited with result '{result:?}'")
+                }
+                Ok(None) => log::error!("finished running, but could not get app result"),
+                Err(e) => log::error!("finished running with error {e}"),
+            };
+
+            slint::quit_event_loop().expect("failed to quit");
+        })
+        .expect("an event loop");
+    })
+    .expect("an event loop");
+
+    slint::run_event_loop_until_quit().expect("slint failed");
 
     Ok(())
 }
 
-fn setup() -> anyhow::Result<()> {
-    RUNTIME
-        .set(tokio::runtime::Handle::current())
-        .expect("failed to set the runtime");
-
+fn setup_logging() -> anyhow::Result<()> {
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::WARN.into())
         .from_env_lossy();
@@ -132,22 +148,16 @@ fn setup() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Start polymodo in standalone mode
-async fn run_polymodo_standalone() {
-    LocalSet::new()
-        .run_until(async move {
-            let _ = polymodo::run_standalone().await;
+pub fn setup_slint_backend() {
+    BackendSelector::default()
+        .with_winit_window_attributes_hook(|mut attrs| {
+            attrs.platform = Some(Box::new(
+                WindowAttributesWayland::layer_shell()
+                    .with_layer(Layer::Overlay)
+                    .with_keyboard_interactivity(KeyboardInteractivity::OnDemand),
+            ));
+            attrs
         })
-        .await;
-}
-
-/// Start the polymodo server.
-async fn run_polymodo_daemon() {
-    LocalSet::new()
-        .run_until(async move {
-            let Err(e) = polymodo::run_server().await;
-
-            log::error!("Error running polymodo: {e}");
-        })
-        .await;
+        .select()
+        .expect("failed to select");
 }

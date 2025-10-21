@@ -1,202 +1,198 @@
-use crate::app_surface_driver;
-use crate::app_surface_driver::{create_app_driver, new_app_key, AppEvent};
-use crate::ipc::{AppDescription, ClientboundMessage, IpcS2C, IpcServer, ServerboundMessage};
-use crate::mode::launch::Launcher;
-use crate::windowing::app::{App, AppSender, AppSetup};
-use crate::windowing::client::{SurfaceEvent, WaylandClient};
+use crate::app;
+use crate::app::{AppEvent, AppMessage, AppResult, AppSender};
+use slint::JoinHandle;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::ops::Deref;
 use std::rc::Rc;
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 
-struct Polymodo {
-    surf_driver_event_sender: mpsc::Sender<SurfaceEvent>,
-    surf_driver_app_sender: local_channel::mpsc::Sender<AppEvent>,
+type FinishSender = oneshot::Sender<Option<Box<dyn AppResult + Send>>>;
+
+pub struct Polymodo {
+    apps: RefCell<HashMap<app::AppKey, Box<dyn app::AppDriver>>>,
+    app_finish_senders: RefCell<HashMap<app::AppKey, FinishSender>>,
+    app_message_channel: (
+        smol::channel::Sender<AppEvent>,
+        smol::channel::Receiver<AppEvent>,
+    ),
 }
 
 impl Polymodo {
-    fn spawn_app<A: App + 'static>(&self) -> JoinHandle<<A as App>::Output>
+    pub fn new() -> Self {
+        let channel = smol::channel::unbounded::<AppEvent>();
+
+        Self {
+            apps: Default::default(),
+            app_finish_senders: Default::default(),
+            app_message_channel: channel,
+        }
+    }
+
+    pub async fn wait_for_app_stop(
+        &self,
+        app_key: app::AppKey,
+    ) -> anyhow::Result<Option<Box<dyn AppResult + Send>>> {
+        // set up the channel of a "finish sender" stored in Polymodo:
+        let (sender, receiver) = oneshot::channel();
+
+        // the sender bit we'll put into polymodo for it to find when an app finishes:
+        {
+            let mut senders = self.app_finish_senders.borrow_mut();
+
+            if let Some(previous_sender) = senders.insert(app_key, sender) {
+                // oops. we're overwriting a sender that came before us!
+                // send it a None, to notify it that it may stop listening:
+                let _ = previous_sender.send(None);
+            }
+
+            drop(senders);
+        }
+
+        // and now, we wait:
+        Ok(receiver.await?)
+    }
+
+    /// Stop an app. Returns its output value, boxed as any.
+    async fn stop_app(&self, app: app::AppKey) -> Result<Box<dyn AppResult + Send>, PolymodoError> {
+        let mut app = self
+            .apps
+            .borrow_mut()
+            .remove(&app)
+            .ok_or(PolymodoError::NoSuchApp(app))?;
+
+        Ok(app.stop())
+    }
+
+    /// Receive one message from the messages channel (potentially waiting if there are none) and
+    /// forward it to the app it came from.
+    async fn handle_app_message(&self) {
+        let Ok(AppEvent { app_key, message }) = self.app_message_channel.1.recv().await else {
+            // `recv` only returns an error if the channel is closed (impossible: `app_message_channel` holds a sender),
+            // or full (impossible: we make an unbounded channel!),
+            // thus this should really never happen.
+            unreachable!();
+        };
+
+        match message {
+            AppMessage::Finished => {
+                let Ok(result) = self.stop_app(app_key).await else {
+                    log::error!("got a Finished message for an app that doesn't exist");
+                    return;
+                };
+
+                // check if anyone's listening for this app's result:
+                let mut senders = self.app_finish_senders.borrow_mut();
+                if let Some(sender) = senders.remove(&app_key) {
+                    if sender.send(Some(result)).is_err() {
+                        log::warn!(
+                            "could not deliver app result because the receiver has been dropped"
+                        );
+                    }
+                } else {
+                    // no one's listening. do we want to log the result somehow?
+                    log::warn!("app finished, but no listener was registered for its result");
+                }
+            }
+            AppMessage::Message(message) => {
+                // handling messages requires mutable access to the app,
+                // so we lock apps here.
+                let mut apps = self.apps.borrow_mut();
+                let Some(app) = apps.get_mut(&app_key) else {
+                    // might happen if an app sends a message, but is stopped before that message ever gets processed.
+                    log::warn!("failed to send message to app, because app does not exist.");
+                    return;
+                };
+
+                app.on_message(message);
+
+                drop(apps); // explicitly release the lock, in case we ever add code below here ;)
+            }
+            AppMessage::SpawnLocal(abortable) => {
+                let mut apps = self.apps.borrow_mut();
+                let Some(app) = apps.get_mut(&app_key) else {
+                    log::warn!("cannot attach task to app, because app does not exist.");
+                    return;
+                };
+
+                app.add_abortable(abortable);
+
+                drop(apps);
+            }
+        }
+    }
+
+    pub fn app_sender<M: Send + 'static>(&self, app_key: app::AppKey) -> AppSender<M> {
+        let sender = self.app_message_channel.0.clone();
+
+        AppSender::new(app_key, sender)
+    }
+
+    /// Is an app with this `app_name` running?
+    pub async fn is_app_running(&self, app_name: app::AppName) -> bool {
+        let apps = self.apps.borrow_mut();
+        apps.values().any(|x| x.app_name() == app_name)
+    }
+
+    pub fn into_handle(self) -> PolymodoHandle {
+        PolymodoHandle(Rc::new(self))
+    }
+}
+
+#[derive(Debug, derive_more::Error, derive_more::Display, derive_more::From)]
+pub enum PolymodoError {
+    #[display("no app with app key {_0} exists")]
+    NoSuchApp(#[error(not(source))] app::AppKey),
+}
+
+#[derive(Clone)]
+pub struct PolymodoHandle(Rc<Polymodo>);
+
+impl Deref for PolymodoHandle {
+    type Target = Polymodo;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl PolymodoHandle {
+    /// Create a new instance of an [app::App] and run it. This must be called from the same
+    /// thread as the slint event loop — otherwise apps may fail to create their UI components.
+    /// Returns the associated app key.
+    ///
+    /// This method only exists on `PolymodoHandle`, as a new handle is created to pass onto the event loop.
+    pub fn spawn_app<A>(&self) -> anyhow::Result<app::AppKey>
     where
-        A::Message: 'static,
-        A::Output: 'static,
+        A: app::App + 'static,
+        A::Message: Send + 'static,
+        A::Output: AppResult + Send,
     {
         // create a new key for this app.
         // (it's just a number)
-        let key = new_app_key();
-        let surf_driver_app_sender = self.surf_driver_app_sender.clone();
-        let send = AppSender::new(key, surf_driver_app_sender.clone());
-        let AppSetup { app, mut effects } = A::create(send);
-        let driver = create_app_driver(key, app, self.surf_driver_event_sender.clone());
+        let key = app::new_app_key();
+        let app_sender = self.app_sender(key);
+        let handle = self.clone();
 
-        self.send_app_event(AppEvent::NewApp {
-            app_driver: Box::new(driver),
-            layer_surface_options: Launcher::layer_surface_options(),
-        });
+        // Create the app and its driver (wrapper)
+        let app = A::create(app_sender);
+        let driver = app::driver_for(app);
 
-        tokio::task::spawn_local(async move {
-            let output = effects.join_next().await.unwrap().unwrap(); // TODO: we need an abstraction on AppSetup to guarantee an effect
+        // Add it to the list
+        let mut apps = handle.apps.borrow_mut();
+        apps.insert(key, Box::new(driver));
+        drop(apps);
 
-            // the app has finished, so we must remove it now.
-            if let Err(e) = surf_driver_app_sender.send(AppEvent::DestroyApp { app_key: key }) {
-                log::error!("failed to send destruction event to `surf_driver_app_sender`: that's pretty bad");
-                log::error!("{e:?}");
+        Ok(key)
+    }
+
+    pub fn start_running(&self) -> JoinHandle<std::convert::Infallible> {
+        let poly = self.clone();
+
+        slint::spawn_local(async move {
+            loop {
+                poly.handle_app_message().await;
             }
-
-            output
-            // TODO: handle output
         })
+        .expect("an event loop")
     }
-
-    fn send_app_event(&self, app_event: AppEvent) {
-        self.surf_driver_app_sender.send(app_event)
-            .expect("failed to spawn new app; thus the app driver is dead; polymodo cannot function anymore.");
-    }
-}
-
-pub async fn run_server() -> anyhow::Result<std::convert::Infallible> {
-    // set up the polymodo daemon socket for clients to connect to
-    let ipc_server = crate::ipc::create_ipc_server().await?; // TODO: try? here is probably not good
-
-    let (poly, dispatch_task) = setup().await?;
-    let poly = Rc::new(poly);
-
-    let _server_task = create_server_task(poly.clone(), ipc_server);
-
-    poly.spawn_app::<Launcher>();
-
-    // both surf_drive_task and dispatch_task should never complete.
-    // we could join and wait on them here, but either will never finish... so we just pick one:
-    Ok(dispatch_task.await?)
-}
-
-pub async fn run_standalone() -> anyhow::Result<()> {
-    let (poly, _dispatch_task) = setup().await?;
-
-    // The output of the app launched is used as the return value for the standalone run:
-    poly.spawn_app::<Launcher>().await?
-}
-
-async fn setup() -> anyhow::Result<(Polymodo, JoinHandle<std::convert::Infallible>)> {
-    // two channels: one for events (that is Send + Sync)
-    let (surf_driver_event_sender, event_receive) = mpsc::channel(128);
-    // and one for app creation, which is !Send and !Sync, so that we do not need a Send+Sync requirement
-    // on App implementations. This allows apps to use normal sync and memory sharing utils, like Rc.
-    let (surf_driver_app_sender, app_receive) = local_channel::mpsc::channel();
-
-    // set up the connection to wayland and wgpu
-    let client = WaylandClient::create(surf_driver_event_sender.clone()).await?;
-    let surface_setup = client.new_surface_setup(Default::default()).await?;
-
-    // set up the surface app driver task.
-    // this one processes events coming from the dispatcher,
-    // render requests from the dispatcher and other sources,
-    // and holds app state.
-    let _surf_drive_task = app_surface_driver::create_surface_driver_task(
-        surf_driver_event_sender.clone(),
-        event_receive,
-        app_receive,
-        surface_setup,
-    );
-
-    // set up the dispatch task which polls wayland and sends client to the surface app driver
-    let dispatch_task = create_dispatch_task(client);
-
-    Ok((
-        Polymodo {
-            surf_driver_event_sender,
-            surf_driver_app_sender,
-        },
-        dispatch_task,
-    ))
-}
-
-fn create_server_task(
-    polymodo: Rc<Polymodo>,
-    ipc_server: IpcServer,
-) -> JoinHandle<std::convert::Infallible> {
-    tokio::task::spawn_local(async move {
-        loop {
-            let Ok(client) = ipc_server.accept().await else {
-                continue;
-            };
-
-            log::debug!("accept new connection at {:?}", client.addr());
-
-            // explicit drop: dropping a JoinHandle does not cancel the task;
-            // we're simply not interested in ever joining this task
-            drop(tokio::task::spawn_local(serve_client(
-                Rc::clone(&polymodo),
-                client,
-            )));
-        }
-    })
-}
-
-/// Given an [IpcClient], perform the read loop, serving any requests made by the client.
-async fn serve_client(polymodo: Rc<Polymodo>, client: IpcS2C) {
-    loop {
-        let message = match client.recv().await {
-            Err(crate::ipc::IpcReceiveError::DecodeError(e)) => {
-                log::error!("could not decode message from client: {e}");
-                log::error!("this is fatal: aborting connection with client.");
-                return;
-            }
-            Err(crate::ipc::IpcReceiveError::IoError(e)) => {
-                log::error!("io error while reading from client: {e}");
-                log::error!("this is fatal: aborting connection with client.");
-                return;
-            }
-            Ok(m) => m,
-        };
-
-        let _ = match message {
-            ServerboundMessage::Ping => client.send(ClientboundMessage::Pong).await,
-            ServerboundMessage::IsRunning(type_id) => {
-                let (tx, rx) = tokio::sync::oneshot::channel();
-                polymodo.send_app_event(AppEvent::AppExistsQuery {
-                    app_type_id: type_id.clone(),
-                    response: tx,
-                });
-
-                let running = rx.await.expect("sender half closed");
-
-                if let Err(e) = client
-                    .send(ClientboundMessage::Running(type_id, running))
-                    .await
-                {
-                    log::error!("failed to reply to client: {e}");
-                }
-
-                Ok(())
-            }
-            ServerboundMessage::Spawn(AppDescription::Launcher) => {
-                let result = polymodo.spawn_app::<Launcher>();
-                let client = client.clone();
-
-                tokio::task::spawn_local(async move {
-                    let app_result = result.await.expect("failed to join app task");
-                    let app_result = format!("{app_result:?}");
-
-                    let _ = client.send(ClientboundMessage::AppResult(app_result)).await;
-                });
-
-                Ok(())
-            }
-            // this client is about to quit.
-            ServerboundMessage::Goodbye => {
-                log::debug!("closing connection at {:?}", client.addr());
-                let _ = client.shutdown().await;
-
-                return;
-            }
-        };
-    }
-}
-
-fn create_dispatch_task(mut client: WaylandClient) -> JoinHandle<std::convert::Infallible> {
-    tokio::task::spawn_blocking(move || loop {
-        if let Err(e) = client.dispatch() {
-            log::warn!("error dispatching: {e}");
-            std::process::exit(1);
-        }
-    })
 }

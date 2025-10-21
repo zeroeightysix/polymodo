@@ -9,7 +9,7 @@ pub struct FuzzySearch<const C: usize, D: Sync + Send + 'static> {
     injector: nucleo::Injector<D>,
     // notification semaphore for when nucleo results are available;
     // notified any time a user may read matches and get a new result from it
-    notify: std::sync::Arc<tokio::sync::Notify>,
+    notify: crate::notify::Notify,
     query: String,
 }
 
@@ -17,10 +17,6 @@ pub trait Row<const C: usize> {
     type Output;
 
     fn columns(&self) -> [Self::Output; C];
-
-    fn bonus(&self) -> u32 {
-        0 // no bonus by default.
-    }
 }
 
 impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
@@ -44,7 +40,7 @@ impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
         if !status.running && status.changed {
             // somehow, the worker finished immediately,
             // so immediately notify of the results.
-            self.notify.notify_one();
+            self.notify.notify();
         }
     }
 
@@ -53,8 +49,10 @@ impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
         let snapshot = self.nucleo.snapshot();
         let matched = snapshot
             .matched_items(..)
-            .map(|i| i.data) // TODO
-            .collect::<Vec<_>>();
+            // .filter(|m| m.idx != u32::MAX) // I don't know why this would occasionally happen, but it would panic.
+            // .filter_map(|m| snapshot.get_item(m.idx))
+            .map(|item| item.data)
+            .collect();
 
         matched
     }
@@ -63,7 +61,7 @@ impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
         self.nucleo.tick(0)
     }
 
-    pub fn notify(&self) -> std::sync::Arc<tokio::sync::Notify> {
+    pub fn notify(&self) -> crate::notify::Notify {
         self.notify.clone()
     }
 
@@ -80,19 +78,14 @@ where
     D: Row<C>,
     D::Output: Into<nucleo::Utf32String>,
 {
-    fn score_tail(score: u32, entry: &D) -> u32 {
-        score + entry.bonus()
-    }
-
     /// Create a new [FuzzySearch] with the provided nucleo configuration
     pub fn create_with_config(config: nucleo::Config) -> Self {
-        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let notify = crate::notify::Notify::new();
         let nucleo = {
             let notify = notify.clone();
             nucleo::Nucleo::new(
                 config,
-                std::sync::Arc::new(Self::score_tail),
-                std::sync::Arc::new(move || notify.notify_one()),
+                std::sync::Arc::new(move || notify.notify()),
                 None,
                 C as u32,
             )
@@ -125,6 +118,7 @@ where
     /// Returns a function that may be called to push items into the fuzzy matcher.
     /// This exists as a simple handle that can be given to an async task, instead of
     /// requiring shared ownership of the [FuzzySearch]
+    #[expect(unused)]
     pub fn pusher(&self) -> impl Fn(D) + Send + Sync {
         let injector = self.injector.clone();
         move |entry: D| {
