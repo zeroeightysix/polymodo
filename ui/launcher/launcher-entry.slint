@@ -143,11 +143,7 @@ component StandardListViewBase inherits ListView {
     }
 
     protected function focus-page-up() {
-        if (root.focus-item != root.first-visible-item()) {
-            root.set-focus-item(root.first-visible-item())
-        } else {
-            root.set-focus-item(root.item-at-y(root.item-y(root.first-visible-item()) - root.height));
-        }
+        root.set-focus-item(max(0, root.current-item - (root.height / root.item-height) + 1))
     }
 
     protected function focus-first() {
@@ -159,11 +155,7 @@ component StandardListViewBase inherits ListView {
     }
 
     protected function focus-page-down() {
-        if (root.focus-item != root.last-visible-item()) {
-            root.set-focus-item(root.last-visible-item())
-        } else {
-            root.set-focus-item(root.item-at-y(root.item-y(root.last-visible-item()) + root.height));
-        }
+        root.set-focus-item(min(model.length - 1, root.current-item + (root.height / root.item-height) - 1))
     }
 
     protected function focus-last() {
