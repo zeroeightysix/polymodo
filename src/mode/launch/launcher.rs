@@ -271,7 +271,7 @@ impl LauncherEntry {
         let icon = self
             .icon
             .as_ref()
-            .map(|buffer| slint::Image::from_rgba8(buffer.clone()))
+            .map(|buffer| slint::Image::from_rgba8_premultiplied(buffer.clone()))
             .unwrap_or_default();
 
         ui::LauncherEntry {

@@ -134,7 +134,7 @@ pub fn load_icon(icon: &str) -> Option<Pixels> {
 
     let icon = icon.to_string();
     if let Ok(image) = slint::Image::load_from_path(path.as_str().as_ref()) {
-        let buffer = image.to_rgba8().unwrap(); // TODO: unwrap?
+        let buffer = image.to_rgba8_premultiplied().unwrap(); // TODO: unwrap?
 
         ICONS_RENDERED.insert(icon, |_| Box::new(RenderedIcon::Ok(buffer.clone())));
 
