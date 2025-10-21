@@ -10,7 +10,7 @@ pub struct FuzzySearch<const C: usize, D: Sync + Send + 'static> {
     // notification semaphore for when nucleo results are available;
     // notified any time a user may read matches and get a new result from it
     notify: crate::notify::Notify,
-    query: String,
+    query: [String; C],
 }
 
 pub trait Row<const C: usize> {
@@ -25,7 +25,7 @@ impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
         let query = query.into();
         // is the old query a prefix of the new one?
         // if true, this enables optimizations in the matcher.
-        let append = query.starts_with(self.query.as_str());
+        let append = query.starts_with(self.query[COL].as_str());
         self.nucleo.pattern.reparse(
             COL,
             query.as_str(),
@@ -34,7 +34,7 @@ impl<const C: usize, D: Sync + Send + 'static> FuzzySearch<C, D> {
             append,
         );
         // update the internal query
-        self.query = query;
+        self.query[COL] = query;
         // update the matcher
         let status = self.tick();
         if !status.running && status.changed {
@@ -96,7 +96,7 @@ where
             nucleo,
             injector,
             notify,
-            query: String::new(),
+            query: [const { String::new() }; _],
         }
     }
 
