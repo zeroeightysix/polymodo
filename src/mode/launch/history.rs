@@ -47,7 +47,7 @@ impl LaunchHistory {
             (0..=1) => 1.0,
             (2..=4) => 0.6,
             (5..=12) => 0.3,
-            _ => 0.0
+            _ => 0.0,
         } * RECENCY_BONUS;
 
         stat.launch_score + recency_bonus

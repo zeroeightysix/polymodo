@@ -185,7 +185,9 @@ impl App for Launcher {
                     .collect();
 
                 self.entries.mutate_all(|_, entry_id, v| {
-                    let position = matches.iter().position(|x| x == entry_id)
+                    let position = matches
+                        .iter()
+                        .position(|x| x == entry_id)
                         .map(|pos| matches.len() - pos);
                     v.shown = position.is_some();
                     v.score = position.unwrap_or_default() as u32;

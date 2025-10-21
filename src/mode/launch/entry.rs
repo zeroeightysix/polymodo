@@ -15,8 +15,7 @@ static DESKTOP_ENTRIES: Mutex<Vec<Arc<DesktopEntry>>> = Mutex::new(Vec::new());
 static ICONS: LazyLock<icon::Icons> = LazyLock::new(icon::Icons::new);
 
 // contains a None entry if we tried loading the icon, but failed
-static ICONS_RENDERED: LazyLock<OnceMap<IconPath, Box<RenderedIcon>>> =
-    LazyLock::new(OnceMap::new);
+static ICONS_RENDERED: LazyLock<OnceMap<IconPath, Box<RenderedIcon>>> = LazyLock::new(OnceMap::new);
 
 // This is just Option, but with variants named for their meaning.
 enum RenderedIcon {
