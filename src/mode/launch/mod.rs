@@ -1,6 +1,6 @@
 mod entry;
 mod history;
 mod launcher;
+mod settings;
 
-use history::*;
 pub use launcher::*;

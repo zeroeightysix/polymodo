@@ -11,6 +11,7 @@ export global LauncherSearch {
 
 export component LauncherWindow inherits Window {
     in property <length> font-size: 16px;
+    in property <float> transparency: 0.8;
 
     callback escape-pressed();
     callback launch(/*id*/ int);
@@ -30,7 +31,7 @@ export component LauncherWindow inherits Window {
     background := Rectangle {
         width: 100%;
         height: 100%;
-        background: #000000cc;
+        background: black.transparentize(transparency);
 
         border-radius: 12px;
         border-color: #333333;

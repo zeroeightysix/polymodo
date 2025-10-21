@@ -1,7 +1,8 @@
 use super::entry::*;
+use super::history::LaunchHistory;
+use super::settings::*;
 use crate::app::{App, AppExt, AppName, AppSender, JsonAppResult};
 use crate::fuzzy_search::FuzzySearch;
-use crate::mode::launch::history::LaunchHistory;
 use crate::mode::{HideOnDrop, HideOnDropExt};
 use crate::ui;
 use crate::ui::index_model::IndexModel;
@@ -27,11 +28,11 @@ pub enum Message {
 
 pub struct Launcher {
     entries: LauncherEntriesModel,
-    #[expect(unused)]
     main_window: HideOnDrop<ui::LauncherWindow>,
     sender: AppSender<Message>,
     search: FuzzySearch<1, SearchEntry>,
-    bias: super::LaunchHistory,
+    bias: LaunchHistory,
+    settings: LauncherSettings,
 }
 
 impl App for Launcher {
@@ -41,8 +42,11 @@ impl App for Launcher {
     const NAME: AppName = AppName::Launcher;
 
     fn create(message_sender: AppSender<Self::Message>) -> Self {
-        // read the bias from persistent state, if any.
+        // read the bias and settings from persistent state, if any.
         let bias = Self::read_state::<LaunchHistory>().ok().unwrap_or_default();
+        let settings = Self::read_state::<LauncherSettings>()
+            .unwrap_or_default()
+            .sanitize();
 
         let main_window: HideOnDrop<ui::LauncherWindow> =
             ui::LauncherWindow::new().unwrap().hide_on_drop();
@@ -129,13 +133,18 @@ impl App for Launcher {
 
         main_window.show().unwrap();
 
-        Launcher {
+        let mut launcher = Launcher {
             entries: model,
             bias,
             search,
             main_window,
             sender: message_sender,
-        }
+            settings,
+        };
+
+        launcher.apply_settings();
+
+        launcher
     }
 
     fn on_message(&mut self, message: Self::Message) {
@@ -233,6 +242,13 @@ impl Launcher {
             desktop: entry,
             icon,
         }
+    }
+
+    fn apply_settings(&mut self) {
+        let LauncherSettings { transparency } = self.settings;
+        let window = &self.main_window;
+
+        window.set_transparency(transparency);
     }
 }
 
