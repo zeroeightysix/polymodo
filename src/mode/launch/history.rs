@@ -1,3 +1,4 @@
+use crate::persistence::StorableState;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -9,6 +10,10 @@ const DAY: Duration = Duration::from_secs(60 * 60 * 24);
 #[derive(Debug, Default, Clone, bincode::Decode, bincode::Encode)]
 pub struct LaunchHistory {
     inner: HashMap<PathBuf, LaunchStatistic>,
+}
+
+impl StorableState for LaunchHistory {
+    const NAME: &'static str = "entry_bias";
 }
 
 #[derive(Debug, Clone, bincode::Decode, bincode::Encode)]

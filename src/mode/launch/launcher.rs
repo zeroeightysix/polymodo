@@ -1,6 +1,7 @@
 use super::entry::*;
-use crate::app::{App, AppName, AppSender, JsonAppResult};
+use crate::app::{App, AppExt, AppName, AppSender, JsonAppResult};
 use crate::fuzzy_search::FuzzySearch;
+use crate::mode::launch::history::LaunchHistory;
 use crate::mode::{HideOnDrop, HideOnDropExt};
 use crate::ui;
 use crate::ui::index_model::IndexModel;
@@ -41,9 +42,7 @@ impl App for Launcher {
 
     fn create(message_sender: AppSender<Self::Message>) -> Self {
         // read the bias from persistent state, if any.
-        let bias: super::LaunchHistory = crate::persistence::read_state("launcher", "entry_bias")
-            .ok()
-            .unwrap_or_default();
+        let bias = Self::read_state::<LaunchHistory>().ok().unwrap_or_default();
 
         let main_window: HideOnDrop<ui::LauncherWindow> =
             ui::LauncherWindow::new().unwrap().hide_on_drop();
@@ -65,7 +64,7 @@ impl App for Launcher {
                     (a_bias, a.score)
                         .partial_cmp(&(b_bias, b.score))
                         .unwrap_or(Ordering::Equal)
-                        // .reverse()
+                    // .reverse()
                 })
                 .reverse()
                 .map(|entry| entry.to_slint());
@@ -149,9 +148,7 @@ impl App for Launcher {
                     self.entries.get_value_of_key(&entry_id)
                 {
                     self.bias.increment_and_decay(desktop.path.clone());
-                    if let Err(e) =
-                        crate::persistence::write_state("launcher", "entry_bias", &self.bias)
-                    {
+                    if let Err(e) = Self::write_state(&self.bias) {
                         log::error!("couldn't write launcher bias (scoring): {e}");
                     }
 

@@ -2,6 +2,10 @@ use std::path::PathBuf;
 
 const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
+pub trait StorableState {
+    const NAME: &'static str;
+}
+
 pub fn get_polymodo_state_home() -> Option<PathBuf> {
     let xdg = xdg::BaseDirectories::new();
 

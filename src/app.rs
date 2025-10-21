@@ -1,3 +1,4 @@
+use crate::persistence::StorableState;
 use bincode::{Decode, Encode};
 use smol::channel::TrySendError;
 use std::future::Future;
@@ -25,6 +26,30 @@ pub trait App: Sized {
 
     fn stop(self) -> Self::Output;
 }
+
+pub trait AppExt: App {
+    fn read_state<S>() -> std::io::Result<S>
+    where
+        S: StorableState + bincode::Decode<()>,
+    {
+        let app_name = Self::NAME.to_string();
+        let state_name = S::NAME;
+
+        crate::persistence::read_state(app_name.as_str(), state_name)
+    }
+
+    fn write_state<S>(state: &S) -> std::io::Result<usize>
+    where
+        S: StorableState + bincode::Encode,
+    {
+        let app_name = Self::NAME.to_string();
+        let state_name = S::NAME;
+
+        crate::persistence::write_state(app_name.as_str(), state_name, state)
+    }
+}
+
+impl<A: App> AppExt for A {}
 
 /// Trait to 'drive' apps, being, to be able to access their methods in a dyn object-compatible way.
 ///
@@ -202,7 +227,7 @@ impl Drop for AbortOnDrop {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Decode, Encode)]
+#[derive(Debug, derive_more::Display, Copy, Clone, PartialEq, Eq, Decode, Encode)]
 pub enum AppName {
     Launcher,
 }
