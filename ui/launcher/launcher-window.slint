@@ -1,7 +1,21 @@
-import { Button, VerticalBox, LineEdit, Palette, ListView, StandardListView } from "std-widgets.slint";
+import {
+    Button,
+    VerticalBox,
+    LineEdit,
+    Palette,
+    ListView,
+    StandardListView,
+    HorizontalBox,
+} from "std-widgets.slint";
 import { PolymodoTextInput } from "text-input.slint";
-import { LauncherEntry, LauncherEntries, LauncherListView } from "launcher-entry.slint";
+import {
+    LauncherEntry,
+    LauncherEntries,
+    LauncherListView,
+} from "launcher-entry.slint";
 import { Separator } from "../separator.slint";
+import { SettingsPopup } from "launcher-settings.slint";
+import { PolyButton } from "../button.slint";
 
 export { LauncherEntries }
 
@@ -11,10 +25,11 @@ export global LauncherSearch {
 
 export component LauncherWindow inherits Window {
     in property <length> font-size: 16px;
-    in property <float> transparency: 0.8;
+    in-out property <float> transparency: 0.2;
 
     callback escape-pressed();
-    callback launch(/*id*/ int);
+    callback launch(id: int);
+    callback transparency-changed(transparency: float);
 
     background: transparent;
     default-font-size: font-size;
@@ -38,41 +53,61 @@ export component LauncherWindow inherits Window {
         border-width: 1px;
     }
 
+    settings_popup := SettingsPopup {
+        close-policy: close-on-click-outside;
+
+        transparency: transparency;
+
+        transparency_changed(t) => {
+            transparency = t;
+            transparency-changed(t);
+        }
+    }
+
     VerticalBox {
         vertical-stretch: 1;
         spacing: 0;
 
-        search_box := PolymodoTextInput {
-            vertical-stretch: 0;
+        HorizontalLayout {
 
-            init => {
-                self.focus-input();
-            }
+            search_box := PolymodoTextInput {
+                vertical-stretch: 0;
 
-            key-pressed(event) => {
-                if (event.text == Key.Escape) {
-                    escape-pressed();
-                    return accept;
-                } else if (event.text == Key.Return) {
-                    let c = list_view.current-item;
-                    if c >= 0 && c < LauncherEntries.entries.length {
-                        launch(LauncherEntries.entries[c].id);
-                    }
-
-                    return accept;
-                } else {
-                    return list_view.key-pressed(event);
+                init => {
+                    self.focus-input();
                 }
 
-                reject
+                key-pressed(event) => {
+                    if (event.text == Key.Escape) {
+                        escape-pressed();
+                        return accept;
+                    } else if (event.text == Key.Return) {
+                        let c = list_view.current-item;
+                        if c >= 0 && c < LauncherEntries.entries.length {
+                            launch(LauncherEntries.entries[c].id);
+                        }
+                        return accept;
+                    } else {
+                        return list_view.key-pressed(event);
+                    }
+
+                    reject
+                }
+
+                text-edited => {
+                    LauncherSearch.search-edited(self.text);
+                }
             }
 
-            text-edited => {
-                LauncherSearch.search-edited(self.text);
+            PolyButton {
+                icon: @image-url("../assets/gear-solid-full.svg");
+                min-width: 0px;
+
+                clicked => settings_popup.show();
             }
         }
 
-        Separator {}
+        Separator { }
 
         Rectangle {
             vertical-stretch: 1;

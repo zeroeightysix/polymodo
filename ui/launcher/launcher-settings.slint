@@ -1,0 +1,44 @@
+import {
+    AboutSlint,
+    VerticalBox,
+    HorizontalBox,
+    Slider,
+} from "std-widgets.slint";
+
+export component SettingsPopup inherits PopupWindow {
+    in property <float> transparency;
+
+    callback transparency_changed(transparency: float);
+
+    Rectangle {
+        background: black;
+        border-radius: 12px;
+
+        VerticalBox {
+            alignment: start;
+
+            HorizontalBox {
+                Text {
+                    text: "Transparency";
+                    vertical-alignment: center;
+                }
+
+                transparency_slider := Slider {
+                    minimum: 0.0;
+                    maximum: 1.0;
+                    step: 0.05;
+                    width: 200px;
+                    value: transparency;
+
+                    changed(value) => transparency_changed(value);
+                }
+
+                Text {
+                    text: (transparency_slider.value * 100).round() + "%";
+                    vertical-alignment: center;
+                    width: 3rem;
+                }
+            }
+        }
+    }
+}

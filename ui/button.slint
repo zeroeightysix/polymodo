@@ -1,0 +1,39 @@
+import { Palette } from "std-widgets.slint";
+export component PolyButton {
+    in-out property <image> icon: @image-url("assets/gear-solid-full.svg");
+    in property <bool> enabled: true;
+    out property <bool> pressed: self.enabled && state.pressed;
+
+    callback clicked <=> state.clicked;
+
+    width: 1rem;
+    height: self.width;
+
+    horizontal-stretch: 0.0;
+    vertical-stretch: 0.0;
+    forward-focus: focus;
+
+    overlay := Rectangle {
+        state := TouchArea {
+            focus := FocusScope {
+                width: 0;
+                enabled <=> root.enabled;
+            }
+
+            Image {
+                source: icon;
+                width: 100%;
+                colorize: white;
+            }
+        }
+    }
+
+    states [
+        pressed when root.pressed : {
+            overlay.background: Palette.accent-background;
+        }
+        hovered when state.has-hover : {
+            overlay.background: Palette.accent-background.transparentize(70%);
+        }
+    ]
+}

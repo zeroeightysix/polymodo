@@ -15,9 +15,7 @@ impl LauncherSettings {
 
 impl Default for LauncherSettings {
     fn default() -> Self {
-        Self {
-            transparency: 0.2
-        }
+        Self { transparency: 0.2 }
     }
 }
 

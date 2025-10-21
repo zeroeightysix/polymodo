@@ -23,6 +23,7 @@ pub enum Message {
     Launch(EntryId),
     NewEntry(EntryId, Arc<DesktopEntry>),
     UpdateIcon(EntryId, Pixels),
+    TransparencySet(f32),
     SearchUpdated,
 }
 
@@ -131,6 +132,13 @@ impl App for Launcher {
             });
         }
 
+        {
+            let message_sender = message_sender.clone();
+            main_window.on_transparency_changed(move |transparency| {
+                message_sender.send(Message::TransparencySet(transparency));
+            });
+        }
+
         main_window.show().unwrap();
 
         let mut launcher = Launcher {
@@ -199,10 +207,18 @@ impl App for Launcher {
                     v.score = position.unwrap_or_default() as u32;
                 });
             }
+            Message::TransparencySet(trans) => {
+                self.settings.transparency = trans;
+            }
         }
     }
 
     fn stop(self) -> Self::Output {
+        // save settings, then quit
+        if let Err(e) = Self::write_state(&self.settings) {
+            log::error!("couldn't write settings: {e}");
+        }
+
         JsonAppResult(())
     }
 }
