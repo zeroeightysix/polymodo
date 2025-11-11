@@ -1,16 +1,19 @@
+use std::cell::LazyCell;
+use std::collections::HashMap;
 use super::*;
 use crate::app::AppSender;
 use once_map::OnceMap;
 use slint::{Rgba8Pixel, SharedString};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
+use indexmap::IndexMap;
 
 type IconPath = String;
 pub type Pixels = slint::SharedPixelBuffer<Rgba8Pixel>;
 
-static DESKTOP_ENTRIES: Mutex<Vec<Arc<DesktopEntry>>> = Mutex::new(Vec::new());
+static DESKTOP_ENTRIES: Mutex<LazyCell<IndexMap<PathBuf, Arc<DesktopEntry>>>> = Mutex::new(LazyCell::new(|| IndexMap::new()));
 
 static ICONS: LazyLock<icon::Icons> = LazyLock::new(icon::Icons::new);
 
@@ -43,7 +46,7 @@ pub fn scour_desktop_entries(sender: AppSender<Message>) {
     // immediately push cached entries
     {
         let rows = DESKTOP_ENTRIES.lock().unwrap();
-        for row in &*rows {
+        for (_, row) in rows.iter() {
             sender.send(Message::NewEntry(next_id(), row.clone()));
         }
     }
@@ -67,7 +70,7 @@ pub fn scour_desktop_entries(sender: AppSender<Message>) {
             }
 
             // if, for this desktop entry, there exists no SearchRow yet (with comparison being done on the source path)
-            if !rows.iter().any(|row| entry.source_path == row.path) {
+            if !rows.contains_key(&entry.source_path) {
                 log::trace!("new entry {}", entry.source_path.to_string_lossy(),);
                 new_entries += 1;
 
@@ -83,11 +86,10 @@ pub fn scour_desktop_entries(sender: AppSender<Message>) {
 
                 // let bonus_score = history.get(&launcher_entry.path).cloned().unwrap_or(0);
 
-                rows.push(desktop_entry);
+                rows.insert(desktop_entry.path.clone(), desktop_entry.clone());
 
                 // and also add it to the fuzzy searcher
-                let entry = rows.last().unwrap().clone();
-                sender.send(Message::NewEntry(next_id(), entry));
+                sender.send(Message::NewEntry(next_id(), desktop_entry));
             }
         }
 
