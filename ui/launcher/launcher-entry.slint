@@ -131,7 +131,7 @@ component StandardListViewBase inherits ListView {
         into-view-item = index;
 
         if (into-view-item-y < 0) {
-            self.viewport-y += 0 - into-view-item-y;
+            self.viewport-y -= into-view-item-y;
         }
         if (into-view-item-y + item-height > self.visible-height) {
             self.viewport-y -= into-view-item-y + item-height - self.visible-height;
@@ -143,7 +143,7 @@ component StandardListViewBase inherits ListView {
     }
 
     protected function focus-page-up() {
-        root.set-focus-item(max(0, root.current-item - (root.height / root.item-height) + 1))
+        root.set-focus-item(root.current-item - (root.height / root.item-height) + 2)
     }
 
     protected function focus-first() {
@@ -155,7 +155,7 @@ component StandardListViewBase inherits ListView {
     }
 
     protected function focus-page-down() {
-        root.set-focus-item(min(model.length - 1, root.current-item + (root.height / root.item-height) - 1))
+        root.set-focus-item(root.current-item + (root.height / root.item-height) - 1)
     }
 
     protected function focus-last() {
@@ -261,13 +261,6 @@ export component LauncherListView inherits StandardListViewBase {
             } else if (event.text == Key.End) {
                 root.focus-last();
                 if (!event.modifiers.control) {
-                    root.select-focus-item();
-                }
-                return accept;
-            } else if (event.text == Key.Space) {
-                if (event.modifiers.control) {
-                    root.toggle-focus-item-selection();
-                } else {
                     root.select-focus-item();
                 }
                 return accept;
