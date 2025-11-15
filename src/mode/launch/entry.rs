@@ -58,7 +58,7 @@ pub fn scour_desktop_entries(sender: AppSender<Message>) {
     {
         let mut rows = DESKTOP_ENTRIES.lock().unwrap();
         let mut new_entries = 0u32;
-
+        let mut temp = vec![];
         for entry in entries {
             let Some(exec) = entry.exec else {
                 continue;
@@ -85,13 +85,14 @@ pub fn scour_desktop_entries(sender: AppSender<Message>) {
                 });
 
                 // let bonus_score = history.get(&launcher_entry.path).cloned().unwrap_or(0);
-
-                rows.insert(desktop_entry.path.clone(), desktop_entry.clone());
+                temp.push((desktop_entry.path.clone(), desktop_entry.clone()));
 
                 // and also add it to the fuzzy searcher
                 sender.send(Message::NewEntry(next_id(), desktop_entry));
             }
         }
+
+        rows.splice(.., temp);
 
         if new_entries != 0 {
             let time_it_took = Instant::now() - start;
