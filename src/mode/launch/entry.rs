@@ -53,13 +53,16 @@ pub fn scour_desktop_entries(sender: AppSender<Message>) {
 
     // then start a search for new ones
     let start = Instant::now();
-    let entries = crate::xdg::find_desktop_entries();
+    let entries: Vec<_> = crate::xdg::find_desktop_entries();
+
     // and add any new ones to the searcher
     {
-        let mut rows = DESKTOP_ENTRIES.lock().unwrap();
+        let mut cache = DESKTOP_ENTRIES.lock().unwrap();
         let mut new_entries = 0u32;
-        let mut temp = vec![];
+        let mut new_cache = vec![];
+
         for entry in entries {
+            // remove entries that aren't fit for being shown in the launcher
             let Some(exec) = entry.exec else {
                 continue;
             };
@@ -69,30 +72,38 @@ pub fn scour_desktop_entries(sender: AppSender<Message>) {
                 continue;
             }
 
-            // if, for this desktop entry, there exists no SearchRow yet (with comparison being done on the source path)
-            if !rows.contains_key(&entry.source_path) {
-                log::trace!("new entry {}", entry.source_path.to_string_lossy(),);
-                new_entries += 1;
 
-                // add a new search entry for this desktop entry.
-                let desktop_entry = Arc::new(DesktopEntry {
-                    name: entry.name.into(),
-                    generic_name: entry.generic_name.clone().map(Into::into),
-                    description: entry.comment.clone().map(Into::into),
-                    path: entry.source_path,
-                    exec,
-                    icon: entry.icon,
-                });
+            // Does this entry exist in the cache already?
+            let entry = match cache.get(&entry.source_path) {
+                Some(de) => de.clone(),
+                // if not, make one!
+                None => {
+                    log::trace!("new entry {}", entry.source_path.to_string_lossy());
+                    new_entries += 1;
 
-                // let bonus_score = history.get(&launcher_entry.path).cloned().unwrap_or(0);
-                temp.push((desktop_entry.path.clone(), desktop_entry.clone()));
+                    // add a new search entry for this desktop entry.
+                    let desktop_entry = Arc::new(DesktopEntry {
+                        name: entry.name.into(),
+                        generic_name: entry.generic_name.clone().map(Into::into),
+                        description: entry.comment.clone().map(Into::into),
+                        path: entry.source_path,
+                        exec,
+                        icon: entry.icon,
+                    });
 
-                // and also add it to the fuzzy searcher
-                sender.send(Message::NewEntry(next_id(), desktop_entry));
-            }
+                    // and also add it to the fuzzy searcher
+                    sender.send(Message::NewEntry(next_id(), desktop_entry.clone()));
+
+                    desktop_entry
+                }
+            };
+
+            new_cache.push(entry);
         }
 
-        rows.splice(.., temp);
+        **cache = new_cache.into_iter()
+            .map(|d| (d.path.clone(), d)) // map each desktop entry to its path
+            .collect();
 
         if new_entries != 0 {
             let time_it_took = Instant::now() - start;
