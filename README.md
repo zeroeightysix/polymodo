@@ -7,7 +7,7 @@ A **super-high performance**, **daemonized**, **fuzzy**
 
 Primarily made to alleviate pains in other application launchers, and therefore with a focus on:
 * uncompromising user-interface: the year is 2025, and we can do better than a CPU-drawn paged list of application names and, if lucky, icons.
-  * polymodo uses [**egui**](https://github.com/emilk/egui/), a rust-native UI toolkit
+  * polymodo uses [**slint**](https://slint.dev/), a rust-native UI toolkit
   * polymodo shows more than just the application name: users deserve the description, category, and **additional actions** an application offers!
 * startup and matching speed:
   * no one wants to wait a second each time their launcher opens, nor are slow search results acceptable: polymodo optimizes both metrics to deliver a **truly fast** launching experience.
