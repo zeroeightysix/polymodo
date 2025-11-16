@@ -1,19 +1,19 @@
-use std::cell::LazyCell;
-use std::collections::HashMap;
 use super::*;
 use crate::app::AppSender;
+use indexmap::IndexMap;
 use once_map::OnceMap;
 use slint::{Rgba8Pixel, SharedString};
-use std::path::{Path, PathBuf};
+use std::cell::LazyCell;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
-use indexmap::IndexMap;
 
 type IconPath = String;
 pub type Pixels = slint::SharedPixelBuffer<Rgba8Pixel>;
 
-static DESKTOP_ENTRIES: Mutex<LazyCell<IndexMap<PathBuf, Arc<DesktopEntry>>>> = Mutex::new(LazyCell::new(|| IndexMap::new()));
+static DESKTOP_ENTRIES: Mutex<LazyCell<IndexMap<PathBuf, Arc<DesktopEntry>>>> =
+    Mutex::new(LazyCell::new(IndexMap::new));
 
 static ICONS: LazyLock<icon::Icons> = LazyLock::new(icon::Icons::new);
 
@@ -72,7 +72,6 @@ pub fn scour_desktop_entries(sender: AppSender<Message>) {
                 continue;
             }
 
-
             // Does this entry exist in the cache already?
             let entry = match cache.get(&entry.source_path) {
                 Some(de) => de.clone(),
@@ -101,7 +100,8 @@ pub fn scour_desktop_entries(sender: AppSender<Message>) {
             new_cache.push(entry);
         }
 
-        **cache = new_cache.into_iter()
+        **cache = new_cache
+            .into_iter()
             .map(|d| (d.path.clone(), d)) // map each desktop entry to its path
             .collect();
 
