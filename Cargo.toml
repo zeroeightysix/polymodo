@@ -2,6 +2,8 @@
 name = "polymodo"
 version = "0.1.0"
 edition = "2021"
+description = "Many (read single) mode launcher"
+authors = ["Ridal"]
 
 [workspace]
 members = [".", "cli-gen"]

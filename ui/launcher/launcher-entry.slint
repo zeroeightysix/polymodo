@@ -12,7 +12,7 @@ export global LauncherEntries {
     in-out property <[LauncherEntry]> entries: [
         {
             name: "Arch linux",
-            icon: @image-url("/usr/share/pixmaps/archlinux-logo.svg"),
+            icon: @image-url("../assets/gear-solid-full.svg"),
             generic_name: "A linux distribution",
             description: "This certainly isn't an ad!"
         }
@@ -43,7 +43,7 @@ export component LauncherEntryDelegate inherits Rectangle {
             // Slint's center text alignment appears to align on the baseline,
             // so we push it down ever so slightly.
             padding-top: entry.description == "" ? 2px : 0px;
-            
+
             HorizontalLayout {
                 alignment: start;
 
