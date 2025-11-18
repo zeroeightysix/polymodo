@@ -2,7 +2,8 @@ use super::*;
 use crate::app::AppSender;
 use indexmap::IndexMap;
 use once_map::OnceMap;
-use slint::{Rgba8Pixel, SharedString};
+use slint::SharedString;
+use smol::io::AsyncReadExt;
 use std::cell::LazyCell;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -10,7 +11,6 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 
 type IconPath = String;
-pub type Pixels = slint::SharedPixelBuffer<Rgba8Pixel>;
 
 static DESKTOP_ENTRIES: Mutex<LazyCell<IndexMap<PathBuf, Arc<DesktopEntry>>>> =
     Mutex::new(LazyCell::new(IndexMap::new));
@@ -22,8 +22,25 @@ static ICONS_RENDERED: LazyLock<OnceMap<IconPath, Box<RenderedIcon>>> = LazyLock
 
 // This is just Option, but with variants named for their meaning.
 enum RenderedIcon {
-    Ok(Pixels),
+    Ok(StaticImage),
     Failed,
+}
+
+#[derive(Debug, Clone)]
+pub struct StaticImage {
+    data: &'static [u8],
+    extension: String,
+}
+
+impl StaticImage {
+    pub fn to_slint_image(&self) -> slint::Image {
+        let StaticImage { data, extension } = self;
+
+        slint::private_unstable_api::re_exports::load_image_from_embedded_data(
+            (*data).into(),
+            extension.as_bytes().into(),
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -118,10 +135,12 @@ pub fn is_icon_cached(icon: &str) -> bool {
 }
 
 /// Try loading an icon, given its path. This function blocks on I/O.
-pub fn load_icon(icon: &str) -> Option<Pixels> {
+/// This function utilizes a cache to avoid reading the same icon twice, but the cache
+/// persists forever: all icons are leaked (to obtain a 'static reference) and placed into the cache.
+pub async fn load_icon(icon: &str) -> Option<StaticImage> {
     if let Some(cached) = ICONS_RENDERED.get(icon) {
         return match cached {
-            RenderedIcon::Ok(pixels) => Some(pixels.clone()),
+            RenderedIcon::Ok(static_image) => Some(static_image.clone()),
             RenderedIcon::Failed => None,
         };
     }
@@ -134,9 +153,7 @@ pub fn load_icon(icon: &str) -> Option<Pixels> {
         let icon = ICONS.find_icon(icon_string.as_str(), 32, 1, "Adwaita"); // TODO: find user icon theme
 
         if let Some(icon) = icon {
-            let path = icon.path.to_string_lossy().to_string();
-
-            path
+            icon.path.to_string_lossy().to_string()
         } else {
             // insert a failed entry into the cache,
             // so that any successive fetches for this icon immediately fail
@@ -145,13 +162,36 @@ pub fn load_icon(icon: &str) -> Option<Pixels> {
         }
     };
 
+    async fn read(path: &std::path::Path) -> Option<&'static [u8]> {
+        use smol::fs::*;
+
+        let mut file = File::open(path).await.ok()?;
+        let mut bytes = vec![];
+        let bytes_read = file.read_to_end(&mut bytes).await.ok()?;
+
+        if bytes_read == 0 {
+            return None;
+        }
+
+        let bytes = bytes.leak(); // fight me
+        Some(bytes)
+    }
+
+    let path = path.as_str().as_ref();
+    let image_data = read(path).await;
+    let extension = path.extension().map(|ext| ext.to_string_lossy());
+    let extension = extension.as_deref().unwrap_or_default().to_string();
+
     let icon = icon.to_string();
-    if let Ok(image) = slint::Image::load_from_path(path.as_str().as_ref()) {
-        let buffer = image.to_rgba8().unwrap(); // TODO: unwrap?
+    if let Some(image_data) = image_data {
+        let static_image = StaticImage {
+            data: image_data,
+            extension,
+        };
 
-        ICONS_RENDERED.insert(icon, |_| Box::new(RenderedIcon::Ok(buffer.clone())));
+        ICONS_RENDERED.insert(icon, |_| Box::new(RenderedIcon::Ok(static_image.clone())));
 
-        Some(buffer)
+        Some(static_image)
     } else {
         ICONS_RENDERED.insert(icon, |_| Box::new(RenderedIcon::Failed));
 

@@ -17,15 +17,15 @@ use crate::mode::launch::Launcher;
 use crate::polymodo::Polymodo;
 use app::AppName;
 use clap::Parser;
+use slint::BackendSelector;
 use slint::winit_030::winit::platform::wayland::{
     KeyboardInteractivity, Layer, WindowAttributesWayland,
 };
-use slint::BackendSelector;
 use std::io::ErrorKind;
 use tracing::metadata::LevelFilter;
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::EnvFilter;
 
 fn main() -> anyhow::Result<()> {
     setup_logging()?;
@@ -67,7 +67,9 @@ fn main() -> anyhow::Result<()> {
             // errors other than ConnectionRefused are considered fatal, as something other went
             // wrong other than "there isn't anyone listening"
             log::error!("Failed to connect to running polymodo daemon: {e}");
-            log::error!("If this happens even though you are sure there is no instance of polymodo running already, then this is a bug: please report it!");
+            log::error!(
+                "If this happens even though you are sure there is no instance of polymodo running already, then this is a bug: please report it!"
+            );
 
             std::process::exit(-1);
         }

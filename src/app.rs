@@ -157,7 +157,9 @@ where
         let message = AppMessage::SpawnLocal(AbortOnDrop::new(Box::new(join_handle)));
 
         if self.send_event(message).is_err() {
-            log::error!("tried sending a task to polymodo, but the message receiver has been dropped; is polymodo dead?");
+            log::error!(
+                "tried sending a task to polymodo, but the message receiver has been dropped; is polymodo dead?"
+            );
         };
     }
 
@@ -167,7 +169,9 @@ where
             .send_event(AppMessage::Message(Box::new(message)))
             .is_err()
         {
-            log::error!("tried sending message to app, but the message receiver has been dropped: is polymodo dead?");
+            log::error!(
+                "tried sending message to app, but the message receiver has been dropped: is polymodo dead?"
+            );
         }
     }
 

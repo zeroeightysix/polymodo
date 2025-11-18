@@ -22,7 +22,7 @@ pub enum Message {
     QuerySet(String),
     Launch(EntryId),
     NewEntry(EntryId, Arc<DesktopEntry>),
-    UpdateIcon(EntryId, Pixels),
+    UpdateIcon(EntryId, StaticImage),
     TransparencySet(f32),
     SearchUpdated,
 }
@@ -231,15 +231,14 @@ impl Launcher {
         let icon = if let Some(icon_path) = entry.icon.as_deref() {
             if is_icon_cached(icon_path) {
                 // great! load_icon won't block:
-                load_icon(icon_path)
+                smol::block_on(load_icon(icon_path))
             } else {
                 // no cache hit -> we'll have to offload this, and update it later.
                 let icon_path = icon_path.to_string();
                 let sender = self.sender.clone();
-                let offloaded_task = smol::unblock(move || load_icon(&icon_path));
 
                 drop(slint::spawn_local(async move {
-                    let icon = offloaded_task.await;
+                    let icon = load_icon(&icon_path).await;
                     if let Some(icon) = icon {
                         sender.send(Message::UpdateIcon(id, icon));
                     }
@@ -294,7 +293,7 @@ pub struct LauncherEntry {
     /// The desktop entry this corresponds with
     desktop: Arc<DesktopEntry>,
     /// This entry's rendered icon
-    icon: Option<Pixels>,
+    icon: Option<StaticImage>,
 }
 
 impl LauncherEntry {
@@ -302,7 +301,7 @@ impl LauncherEntry {
         let icon = self
             .icon
             .as_ref()
-            .map(|buffer| slint::Image::from_rgba8(buffer.clone()))
+            .map(|buffer| buffer.to_slint_image())
             .unwrap_or_default();
 
         ui::LauncherEntry {
