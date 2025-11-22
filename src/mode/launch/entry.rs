@@ -15,7 +15,11 @@ type IconPath = String;
 static DESKTOP_ENTRIES: Mutex<LazyCell<IndexMap<PathBuf, Arc<DesktopEntry>>>> =
     Mutex::new(LazyCell::new(IndexMap::new));
 
-static ICONS: LazyLock<icon::Icons> = LazyLock::new(icon::Icons::new);
+static ICONS: LazyLock<Mutex<icon::IconsCache>> = LazyLock::new(|| {
+    let mut cache: icon::IconsCache = icon::Icons::new().into();
+    cache.pre_populate_cache();
+    Mutex::new(cache)
+});
 
 // contains a None entry if we tried loading the icon, but failed
 static ICONS_RENDERED: LazyLock<OnceMap<IconPath, Box<RenderedIcon>>> = LazyLock::new(OnceMap::new);
@@ -150,10 +154,10 @@ pub async fn load_icon(icon: &str) -> Option<StaticImage> {
         icon.to_string()
     } else {
         let icon_string = icon.to_string();
-        let icon = ICONS.find_icon(icon_string.as_str(), 32, 1, "Adwaita"); // TODO: find user icon theme
+        let icon = ICONS.lock().unwrap().find_default_icon(icon_string.as_str(), 32, 1);
 
         if let Some(icon) = icon {
-            icon.path.to_string_lossy().to_string()
+            icon.path().to_string_lossy().to_string()
         } else {
             // insert a failed entry into the cache,
             // so that any successive fetches for this icon immediately fail

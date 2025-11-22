@@ -31,7 +31,7 @@ fork = "0.2.0"
 rand = "0.9.0"
 bincode = "2.0.1"
 walkdir = "2.5.0"
-icon = "0.1.2"
+icon = { version = "0.2.0", features = ["cache"] }
 smol = "2.0.2"
 oneshot = "0.1.11"
 nucleo = "0.5.0"
