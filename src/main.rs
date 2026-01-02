@@ -15,6 +15,7 @@ use crate::cli::Args;
 use crate::ipc::{AppSpawnOptions, ClientboundMessage, IpcC2S, ServerboundMessage};
 use crate::mode::launch::Launcher;
 use crate::polymodo::Polymodo;
+use crate::server::BackendOptions;
 use app::AppName;
 use clap::Parser;
 use slint::BackendSelector;
@@ -31,11 +32,18 @@ fn main() -> anyhow::Result<()> {
     setup_logging()?;
 
     let args = cli::Args::parse();
+    let backend_options = server::BackendOptions {
+        keyboard_interactivity: if args.exclusive {
+            KeyboardInteractivity::Exclusive
+        } else {
+            KeyboardInteractivity::OnDemand
+        },
+    };
 
     if args.standalone {
         log::info!("Starting standalone polymodo");
 
-        run_standalone()?;
+        run_standalone(backend_options)?;
 
         std::process::exit(0);
     }
@@ -59,7 +67,7 @@ fn main() -> anyhow::Result<()> {
             // let's become that!
             log::info!("Starting polymodo daemon");
 
-            server::run_server()?;
+            server::run_server(backend_options)?;
 
             unreachable!();
         }
@@ -105,8 +113,8 @@ async fn run_client(args: Args, client: IpcC2S) -> anyhow::Result<Option<String>
 /// Run polymodo without connecting to a server and without setting up IPC.
 ///
 /// This function returns when the spawned app dies.
-pub fn run_standalone() -> anyhow::Result<()> {
-    setup_slint_backend();
+pub fn run_standalone(backend_options: BackendOptions) -> anyhow::Result<()> {
+    setup_slint_backend(backend_options);
 
     slint::invoke_from_event_loop(|| {
         let poly = Polymodo::new().into_handle();
@@ -150,13 +158,13 @@ fn setup_logging() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn setup_slint_backend() {
+pub fn setup_slint_backend(backend_options: BackendOptions) {
     BackendSelector::default()
-        .with_winit_window_attributes_hook(|mut attrs| {
+        .with_winit_window_attributes_hook(move |mut attrs| {
             attrs.platform = Some(Box::new(
                 WindowAttributesWayland::layer_shell()
                     .with_layer(Layer::Overlay)
-                    .with_keyboard_interactivity(KeyboardInteractivity::OnDemand),
+                    .with_keyboard_interactivity(backend_options.keyboard_interactivity),
             ));
             attrs
         })

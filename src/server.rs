@@ -1,3 +1,4 @@
+use slint::winit_030::winit::platform::wayland::KeyboardInteractivity;
 use crate::ipc::{AppSpawnOptions, ClientboundMessage, IpcS2C, IpcServer, ServerboundMessage};
 use crate::mode::launch::Launcher;
 use crate::polymodo::{Polymodo, PolymodoHandle};
@@ -8,8 +9,13 @@ enum ServerError {
     FailedToGetResult,
 }
 
-pub fn run_server() -> anyhow::Result<std::convert::Infallible> {
-    crate::setup_slint_backend();
+
+pub struct BackendOptions {
+    pub keyboard_interactivity: KeyboardInteractivity,
+}
+
+pub fn run_server(backend_options: BackendOptions) -> anyhow::Result<std::convert::Infallible> {
+    crate::setup_slint_backend(backend_options);
 
     // set up the polymodo daemon socket for clients to connect to
     let ipc_server = crate::ipc::create_ipc_server()?; // TODO: try? here is probably not good

@@ -12,4 +12,7 @@ pub struct Args {
     /// This argument does nothing when combined with --standalone, as a standalone instance can't have any apps running already.
     #[arg(long, short)]
     pub single: bool,
+    /// Grab exclusive keyboard focus
+    #[arg(long, short)]
+    pub exclusive:bool,
 }
