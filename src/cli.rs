@@ -13,6 +13,6 @@ pub struct Args {
     #[arg(long, short)]
     pub single: bool,
     /// Grab exclusive keyboard focus
-    #[arg(long, short)]
+    #[arg(long, short = 'x')]
     pub exclusive:bool,
 }
