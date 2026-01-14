@@ -154,7 +154,10 @@ pub async fn load_icon(icon: &str) -> Option<StaticImage> {
         icon.to_string()
     } else {
         let icon_string = icon.to_string();
-        let icon = ICONS.lock().unwrap().find_default_icon(icon_string.as_str(), 32, 1);
+        let icon = ICONS
+            .lock()
+            .unwrap()
+            .find_default_icon(icon_string.as_str(), 32, 1);
 
         if let Some(icon) = icon {
             icon.path().to_string_lossy().to_string()

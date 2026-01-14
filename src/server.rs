@@ -1,14 +1,13 @@
-use slint::winit_030::winit::platform::wayland::KeyboardInteractivity;
 use crate::ipc::{AppSpawnOptions, ClientboundMessage, IpcS2C, IpcServer, ServerboundMessage};
 use crate::mode::launch::Launcher;
 use crate::polymodo::{Polymodo, PolymodoHandle};
+use slint::winit_030::winit::platform::wayland::KeyboardInteractivity;
 
 #[derive(Debug, derive_more::Error, derive_more::Display, derive_more::From)]
 enum ServerError {
     #[display("the server could not retrieve the app's result")]
     FailedToGetResult,
 }
-
 
 pub struct BackendOptions {
     pub keyboard_interactivity: KeyboardInteractivity,
